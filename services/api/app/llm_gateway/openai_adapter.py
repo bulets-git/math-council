@@ -11,9 +11,9 @@ from app.llm_gateway.base import BaseLLMAdapter, LLMResponse
 class OpenAIAdapter(BaseLLMAdapter):
     """Adapter for OpenAI models (GPT-4o, etc.)."""
 
-    def __init__(self, model_name: str = "gpt-4o", api_key: str | None = None):
+    def __init__(self, model_name: str = "gpt-4o", api_key: str | None = None, api_base: str | None = None):
         super().__init__(model_name=model_name, api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+        self.api_base = api_base or os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
     async def generate(
         self,
@@ -23,12 +23,14 @@ class OpenAIAdapter(BaseLLMAdapter):
         **kwargs: Any,
     ) -> LLMResponse:
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY is not configured.")
+            raise ValueError(f"API key is not configured for {self.model_name} (base: {self.api_base}).")
 
         start_time = time.perf_counter()
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "HTTP-Referer": "https://mathcouncil.ai",
+            "X-Title": "Math Council Olympiad AI",
         }
 
         payload: dict[str, Any] = {
@@ -37,14 +39,23 @@ class OpenAIAdapter(BaseLLMAdapter):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": kwargs.get("temperature", 0.2),
         }
+        if not any(k in self.model_name.lower() for k in ["o1", "o3", "reasoner"]):
+            payload["temperature"] = kwargs.get("temperature", 0.2)
 
         if response_schema:
             payload["response_format"] = {"type": "json_object"}
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             res = await client.post(f"{self.api_base}/chat/completions", headers=headers, json=payload)
+            if res.status_code >= 400:
+                import logging
+                logging.getLogger("llm_gateway.openai_adapter").error(
+                    "OpenAIAdapter HTTP %d from %s/chat/completions: %s",
+                    res.status_code,
+                    self.api_base,
+                    res.text,
+                )
             res.raise_for_status()
             data = res.json()
 

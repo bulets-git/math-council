@@ -17,7 +17,9 @@ from app.schemas.agent_contracts import (
 
 def _detect_context(user_prompt: str) -> str:
     p = user_prompt.lower()
-    if any(k in p for k in ["chọn số", "alice", "bob", "hợp số", "tập s", "s = \\{", "trò chơi"]):
+    if any(k in p for k in ["bàn cờ", "quân tượng", "quân hậu", "quân mã", "tổ hợp", "rời rạc", "lưới ô vuông", "đồ thị", "dirichlet", "pigeonhole", "đường chéo", "bishop", "chessboard"]):
+        return "combinatorics_chessboard"
+    elif any(k in p for k in ["chọn số", "alice", "bob", "hợp số", "tập s", "s = \\{", "trò chơi"]):
         return "game_theory"
     elif any(k in p for k in ["tam giác", "hình học", "vuông tại", "đường tròn", "góc"]):
         return "geometry"
@@ -59,7 +61,10 @@ class DeterministicMockAdapter(BaseLLMAdapter):
             if not clean_stmt:
                 clean_stmt = "Cho phương trình $ax^2 + bx + c = 0$ ($a \\neq 0$)."
 
-            if ctx == "game_theory":
+            if ctx == "combinatorics_chessboard":
+                assump = ["Bàn cờ $N \\times N$", "Hai quân tượng không ăn nhau nếu không cùng đường chéo", "Tìm số quân tượng tối đa"]
+                vars_dict = {"N": "kích thước bàn cờ", "2N-2": "số lượng quân tượng tối đa"}
+            elif ctx == "game_theory":
                 assump = ["$S = \\{1, 2, \\dots, n\\}$", "Alice và Bob chơi luân phiên", "Các số không lặp lại"]
                 vars_dict = {"n": "số lượng phần tử trong tập hợp S", "S": "tập hợp các số nguyên từ 1 đến n"}
             elif ctx == "geometry":
@@ -82,7 +87,9 @@ class DeterministicMockAdapter(BaseLLMAdapter):
             parsed = obj.model_dump()
 
         elif response_schema is SkepticOutput or (response_schema is None and "Nhà Phản Biện" in system_prompt):
-            if ctx == "game_theory":
+            if ctx == "combinatorics_chessboard":
+                arg = "Cần phân hoạch đường chéo thành 2 lớp màu ô cờ độc lập và kiểm tra trường hợp biên N = 1."
+            elif ctx == "game_theory":
                 arg = "Cần chứng minh chặt chẽ tính chẵn lẻ của tổng với trường hợp nhỏ $n \\le 3$."
             elif ctx == "geometry":
                 arg = "Cần kiểm tra kỹ tính suy biến của các góc khi điểm trùng nhau."
@@ -103,7 +110,14 @@ class DeterministicMockAdapter(BaseLLMAdapter):
             parsed = obj.model_dump()
 
         elif response_schema is JudgeOutput or (response_schema is None and "Thẩm Định Viên" in system_prompt):
-            if ctx == "game_theory":
+            if ctx == "combinatorics_chessboard":
+                latex_sol = (
+                    "**Lời giải bài toán quân tượng trên bàn cờ:**\n\n"
+                    "Số lượng quân tượng tối đa có thể đặt lên bàn cờ $N \\times N$ sao cho không quân nào ăn nhau là $2N - 2$ với $N \\ge 2$ (và bằng $1$ với $N = 1$).\n\n"
+                    "Chứng minh dựa trên phân hoạch $2N-1$ đường chéo song song và nguyên lý Dirichlet."
+                )
+                summary = "Hội đồng AI thống nhất phán quyết: Đáp số là $2N - 2$ (với $N \\ge 2$) bằng phương pháp phân hoạch đường chéo và Dirichlet."
+            elif ctx == "game_theory":
                 latex_sol = (
                     "**Kết luận chiến lược thắng của trò chơi:**\n\n"
                     "- Tổng tất cả các phần tử trong $S$ là $T_n = \\frac{n(n+1)}{2}$.\n"
@@ -140,7 +154,15 @@ class DeterministicMockAdapter(BaseLLMAdapter):
             parsed = obj.model_dump()
 
         elif response_schema is SolverOutput or (response_schema is None and ("Chuyên gia Giải toán" in system_prompt or "Reviser" in system_prompt)):
-            if ctx == "game_theory":
+            if ctx == "combinatorics_chessboard":
+                summary = "Sử dụng phân hoạch đường chéo và nguyên lý Dirichlet để tìm số lượng quân tượng tối đa không ăn nhau trên bàn cờ N x N."
+                claims = [
+                    ClaimItem(label="C1", content="Trên bàn cờ $N \\times N$, mỗi quân tượng kiểm soát các ô trên các đường chéo. Có $2N - 1$ đường chéo song song theo mỗi hướng.", claim_type="definition", depends_on=[]),
+                    ClaimItem(label="C2", content="Mỗi đường chéo chỉ chứa tối đa 1 quân tượng. Phân hoạch bàn cờ theo hệ đường chéo cùng hướng và đánh giá theo màu ô cờ, tổng số quân tượng không vượt quá $(N-1) + (N-1) = 2N - 2$ với $N \\ge 2$.", claim_type="inference", depends_on=["C1"]),
+                    ClaimItem(label="C3", content="Chỉ ra cách đặt $2N - 2$ quân tượng thỏa mãn: đặt toàn bộ $N$ quân ở hàng 1 và $N-2$ quân ở hàng $N$ (bỏ 2 ô góc). Với $N=1$, đáp số là 1.", claim_type="calculation", depends_on=["C2"]),
+                ]
+                ans = "2N - 2 (với N >= 2), 1 (với N = 1)"
+            elif ctx == "game_theory":
                 summary = "Phân tích chiến lược chọn số của Alice và Bob trên tập S = {1, 2, ..., n}."
                 claims = [
                     ClaimItem(label="C1", content="Tổng tất cả các số trong tập $S$ là $T = \\frac{n(n+1)}{2}$.", claim_type="definition", depends_on=[]),

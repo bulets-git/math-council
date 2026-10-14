@@ -4,8 +4,11 @@ Bộ máy Điều phối Hội đồng Giải toán (Math Council State Machine 
 có thể chạy trên một hãng AI khác nhau và tự động ghi nhận tổng chi phí USD.
 """
 import asyncio
+import logging
 from decimal import Decimal
 from typing import Any, Awaitable, Callable
+
+logger = logging.getLogger("orchestrator.council_runner")
 from app.claims.dag_validator import validate_claims_dag
 from app.core.config import settings
 from app.llm_gateway.base_and_adapters import LLMCallResult, MultiProviderRouter
@@ -200,122 +203,101 @@ class MathCouncilOrchestrator:
             if source_disc_out.canonical_solution:
                 reference_notes += f"\n[TÓM TẮT LỜI GIẢI GỐC]: {source_disc_out.canonical_solution.summary}"
 
-        # 2. SOLVING (Song song Solver A và Solver B trên 2 model độc lập)
+        # 2. SOLVING (Song song Solver A, Solver B và Solver C nếu được cấu hình)
+        solver_roles = ["solver_a", "solver_b"]
+        if self.role_models.get("solver_c"):
+            solver_roles.append("solver_c")
+
         await self._emit(
             "solving",
-            {"solver_a": self.role_models["solver_a"], "solver_b": self.role_models["solver_b"]},
+            {role: self.role_models[role] for role in solver_roles},
         )
         solver_prompt_input = wrap_untrusted_content("normalized_problem", problem_text) + reference_notes
 
-        (solver_a_out, meta_a), (solver_b_out, meta_b) = await asyncio.gather(
-            self.router.call_for_role(
-                role_model_spec=self.role_models["solver_a"],
-                prompt_version=SOLVER_PROMPT_V1.version,
-                system_prompt=SOLVER_PROMPT_V1.system_instruction + "\nVai trò: Solver A.",
-                user_prompt=solver_prompt_input,
-                response_schema=SolverOutputSchema,
-            ),
-            self.router.call_for_role(
-                role_model_spec=self.role_models["solver_b"],
-                prompt_version=SOLVER_PROMPT_V1.version,
-                system_prompt=SOLVER_PROMPT_V1.system_instruction + "\nVai trò: Solver B.",
-                user_prompt=solver_prompt_input,
-                response_schema=SolverOutputSchema,
-            ),
+        solver_calls = await asyncio.gather(
+            *[
+                self.router.call_for_role(
+                    role_model_spec=self.role_models[role],
+                    prompt_version=SOLVER_PROMPT_V1.version,
+                    system_prompt=SOLVER_PROMPT_V1.system_instruction + f"\nVai trò: {role.replace('_', ' ').title()}.",
+                    user_prompt=solver_prompt_input,
+                    response_schema=SolverOutputSchema,
+                )
+                for role in solver_roles
+            ]
         )
-        self._record_call(meta_a)
-        self._record_call(meta_b)
+        for _, meta_s in solver_calls:
+            self._record_call(meta_s)
 
-        dag_a = validate_claims_dag(solver_a_out.claims)
-        dag_b = validate_claims_dag(solver_b_out.claims)
+        current_solvers = {role: res[0] for role, res in zip(solver_roles, solver_calls)}
+        dag_validations = {
+            f"{role}_valid": validate_claims_dag(current_solvers[role].claims).is_valid
+            for role in solver_roles
+        }
 
         # 3 & 4. CRITIQUING & REVISING
-        current_a = solver_a_out
-        current_b = solver_b_out
         all_critiques: list[dict[str, Any]] = []
 
         for round_idx in range(1, max_rounds + 1):
             await self._emit("critiquing", {"round": round_idx, "skeptic": self.role_models["skeptic"]})
-            (crit_a, meta_ca), (crit_b, meta_cb) = await asyncio.gather(
-                self.router.call_for_role(
-                    role_model_spec=self.role_models["skeptic"],
-                    prompt_version=SKEPTIC_PROMPT_V1.version,
-                    system_prompt=SKEPTIC_PROMPT_V1.system_instruction,
-                    user_prompt=(
-                        wrap_untrusted_content("problem", problem_text)
-                        + "\n"
-                        + wrap_untrusted_content("solver_a_solution", current_a.model_dump_json())
-                    ),
-                    response_schema=SkepticOutputSchema,
-                ),
-                self.router.call_for_role(
-                    role_model_spec=self.role_models["skeptic"],
-                    prompt_version=SKEPTIC_PROMPT_V1.version,
-                    system_prompt=SKEPTIC_PROMPT_V1.system_instruction,
-                    user_prompt=(
-                        wrap_untrusted_content("problem", problem_text)
-                        + "\n"
-                        + wrap_untrusted_content("solver_b_solution", current_b.model_dump_json())
-                    ),
-                    response_schema=SkepticOutputSchema,
-                ),
+            crit_calls = await asyncio.gather(
+                *[
+                    self.router.call_for_role(
+                        role_model_spec=self.role_models["skeptic"],
+                        prompt_version=SKEPTIC_PROMPT_V1.version,
+                        system_prompt=SKEPTIC_PROMPT_V1.system_instruction,
+                        user_prompt=(
+                            wrap_untrusted_content("problem", problem_text)
+                            + "\n"
+                            + wrap_untrusted_content(f"{role}_solution", current_solvers[role].model_dump_json())
+                        ),
+                        response_schema=SkepticOutputSchema,
+                    )
+                    for role in solver_roles
+                ]
             )
-            self._record_call(meta_ca)
-            self._record_call(meta_cb)
+            for _, meta_c in crit_calls:
+                self._record_call(meta_c)
 
-            all_critiques.append({
-                "round": round_idx,
-                "solver_a_challenges": [c.model_dump() for c in crit_a.challenges],
-                "solver_b_challenges": [c.model_dump() for c in crit_b.challenges],
-            })
+            crit_map = {role: res[0] for role, res in zip(solver_roles, crit_calls)}
+            round_crit: dict[str, Any] = {"round": round_idx}
+            for role in solver_roles:
+                round_crit[f"{role}_challenges"] = [c.model_dump() for c in crit_map[role].challenges]
+            all_critiques.append(round_crit)
 
-            if not crit_a.challenges and not crit_b.challenges:
+            if not any(bool(crit_map[role].challenges) for role in solver_roles):
                 break
 
             await self._emit("revising", {"round": round_idx})
-            if crit_a.challenges:
-                rev_a, meta_ra = await self.router.call_for_role(
-                    role_model_spec=self.role_models["solver_a"],
-                    prompt_version=REVISER_PROMPT_V1.version,
-                    system_prompt=REVISER_PROMPT_V1.system_instruction,
-                    user_prompt=(
-                        wrap_untrusted_content("problem", problem_text)
-                        + "\n"
-                        + wrap_untrusted_content("previous_solution", current_a.model_dump_json())
-                        + "\n"
-                        + wrap_untrusted_content("skeptic_challenges", crit_a.model_dump_json())
-                    ),
-                    response_schema=SolverRevisionOutputSchema,
-                )
-                self._record_call(meta_ra)
-                current_a = rev_a.revised_solution
-
-            if crit_b.challenges:
-                rev_b, meta_rb = await self.router.call_for_role(
-                    role_model_spec=self.role_models["solver_b"],
-                    prompt_version=REVISER_PROMPT_V1.version,
-                    system_prompt=REVISER_PROMPT_V1.system_instruction,
-                    user_prompt=(
-                        wrap_untrusted_content("problem", problem_text)
-                        + "\n"
-                        + wrap_untrusted_content("previous_solution", current_b.model_dump_json())
-                        + "\n"
-                        + wrap_untrusted_content("skeptic_challenges", crit_b.model_dump_json())
-                    ),
-                    response_schema=SolverRevisionOutputSchema,
-                )
-                self._record_call(meta_rb)
-                current_b = rev_b.revised_solution
+            for role in solver_roles:
+                if crit_map[role].challenges:
+                    rev_res, meta_r = await self.router.call_for_role(
+                        role_model_spec=self.role_models[role],
+                        prompt_version=REVISER_PROMPT_V1.version,
+                        system_prompt=REVISER_PROMPT_V1.system_instruction,
+                        user_prompt=(
+                            wrap_untrusted_content("problem", problem_text)
+                            + "\n"
+                            + wrap_untrusted_content("previous_solution", current_solvers[role].model_dump_json())
+                            + "\n"
+                            + wrap_untrusted_content("skeptic_challenges", crit_map[role].model_dump_json())
+                        ),
+                        response_schema=SolverRevisionOutputSchema,
+                    )
+                    self._record_call(meta_r)
+                    current_solvers[role] = rev_res.revised_solution
 
         # 5. ADJUDICATING (Judge tổng hợp)
         await self._emit("adjudicating", {"judge": self.role_models["judge"]})
+        solvers_final_str = "\n".join(
+            wrap_untrusted_content(f"{role}_final", current_solvers[role].model_dump_json())
+            for role in solver_roles
+        )
         judge_input = (
             wrap_untrusted_content("problem", problem_text)
             + (f"\n[NGUỒN GỐC BÀI TOÁN]: {source_disc_out.source_metadata.competition_name}\n" if (source_disc_out and source_disc_out.source_found and source_disc_out.source_metadata) else "")
             + "\n"
-            + wrap_untrusted_content("solver_a_final", current_a.model_dump_json())
-            + "\n"
-            + wrap_untrusted_content("solver_b_final", current_b.model_dump_json())
+            + solvers_final_str
             + "\n"
             + wrap_untrusted_content("critique_history", str(all_critiques))
         )
@@ -329,19 +311,22 @@ class MathCouncilOrchestrator:
         self._record_call(meta_j)
 
         await self._emit("completed", {"verdict": judge_out.verdict_status})
-        return {
+        result_payload: dict[str, Any] = {
             "final_status": "completed",
             "normalization": norm_out.model_dump(),
             "discovered_source": source_disc_out.model_dump() if source_disc_out else None,
             "fast_track_applied": False,
-            "dag_validation": {"solver_a_valid": dag_a.is_valid, "solver_b_valid": dag_b.is_valid},
-            "solver_a_final": current_a.model_dump(),
-            "solver_b_final": current_b.model_dump(),
+            "dag_validation": dag_validations,
+            "solver_a_final": current_solvers["solver_a"].model_dump(),
+            "solver_b_final": current_solvers["solver_b"].model_dump(),
             "critiques": all_critiques,
             "judge_report": judge_out.model_dump(),
             "total_cost_usd": str(self.total_cost_usd),
             "model_calls": [c.model_dump() for c in self.call_history],
         }
+        if "solver_c" in current_solvers:
+            result_payload["solver_c_final"] = current_solvers["solver_c"].model_dump()
+        return result_payload
 
     # Alias for convenience
     run = execute_pipeline

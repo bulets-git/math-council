@@ -69,3 +69,48 @@ async def test_math_council_orchestrator_pipeline():
     assert "adjudicating" in events_emitted
     assert "completed" in events_emitted
     assert float(result["total_cost_usd"]) >= 0
+    # Solver C is configured and included in pipeline
+    assert "solver_c_final" in result
+    assert result["dag_validation"]["solver_c_valid"] is True
+
+
+def test_prompts_anti_hallucination_and_domain_rules():
+    """Kiểm tra các chỉ dẫn chống ảo giác và phân môn trong prompts."""
+    from app.prompts.math_council_prompts import (
+        NORMALIZER_PROMPT_V1,
+        SOLVER_PROMPT_V1,
+        SKEPTIC_PROMPT_V1,
+    )
+    # Normalizer phân loại phân môn và bắt buộc 'Tổ hợp / Toán rời rạc' cho bàn cờ
+    norm_sys = NORMALIZER_PROMPT_V1.system_instruction
+    assert "detected_subject" in norm_sys
+    assert "Tổ hợp / Toán rời rạc" in norm_sys
+    assert "bàn cờ" in norm_sys
+
+    # Solver cấm định lý hình học liên tục cho bài toán rời rạc
+    solver_sys = SOLVER_PROMPT_V1.system_instruction
+    assert "đối tượng toán học" in solver_sys
+    assert "hình học liên tục" in solver_sys
+    assert "Dirichlet" in solver_sys or "Pigeonhole" in solver_sys
+    assert "phân hoạch đường chéo" in solver_sys
+
+    # Skeptic bắt buộc tạo critical challenge invalid_inference nếu dùng sai công cụ lý thuyết
+    skeptic_sys = SKEPTIC_PROMPT_V1.system_instruction
+    assert "severity='critical'" in skeptic_sys
+    assert "error_type='invalid_inference'" in skeptic_sys
+
+
+def test_strict_no_mock_fallback_in_live_mode(monkeypatch):
+    """Kiểm tra khi DEFAULT_LLM_PROVIDER == 'live', cấm tuyệt đối fallback ngầm về Mock Adapter."""
+    from app.core.config import settings
+    from app.llm_gateway.factory import get_llm_adapter
+
+    monkeypatch.setattr(settings, "DEFAULT_LLM_PROVIDER", "live")
+
+    # Gọi với model không xác định phải văng ValueError, không được trả về DeterministicMockAdapter
+    with pytest.raises(ValueError, match="Tuyệt đối cấm fallback ngầm về Mock Adapter"):
+        get_llm_adapter("unknown-custom-model-xyz")
+
+    # Kiểm tra solver_c model trong config là model OpenRouter chuẩn
+    assert "openai_compatible" in settings.ROLE_SOLVER_C_MODEL
+    assert "o3-mini" in settings.ROLE_SOLVER_C_MODEL or "deepseek" in settings.ROLE_SOLVER_C_MODEL

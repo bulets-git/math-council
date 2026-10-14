@@ -71,7 +71,9 @@ class CouncilOrchestrator:
         if not problem:
             raise ValueError(f"Problem {run.problem_id} not found")
 
-        adapter = get_llm_adapter("mock-math-council")
+        is_live = (settings.DEFAULT_LLM_PROVIDER == "live") or ((run.config or {}).get("mode") == "live")
+        norm_model = settings.ROLE_NORMALIZER_MODEL if is_live else "mock-math-council"
+        adapter = get_llm_adapter(norm_model)
 
         try:
             # ---------------------------------------------------------
@@ -133,7 +135,7 @@ class CouncilOrchestrator:
                 await db.commit()
                 await event_publisher.publish(run_id, "status_changed", {"status": "retrieving_source"})
 
-                router = MultiProviderRouter(force_mock=True)
+                router = MultiProviderRouter(force_mock=(not is_live))
                 src_out, src_meta = await router.call_for_role(
                     role_model_spec=settings.ROLE_SOURCE_FINDER_MODEL,
                     prompt_version=SOURCE_FINDER_PROMPT_V1.version,
@@ -191,7 +193,9 @@ class CouncilOrchestrator:
         src_out: SourceDiscoveryOutputSchema,
     ) -> str:
         run_id = run.id
-        adapter = get_llm_adapter("mock-math-council")
+        is_live = (settings.DEFAULT_LLM_PROVIDER == "live") or ((run.config or {}).get("mode") == "live")
+        adapter_sk = get_llm_adapter(settings.ROLE_SKEPTIC_MODEL if is_live else "mock-math-council")
+        adapter_jd = get_llm_adapter(settings.ROLE_JUDGE_MODEL if is_live else "mock-math-council")
         canonical = src_out.canonical_solution
         assert canonical is not None
 
@@ -223,7 +227,7 @@ class CouncilOrchestrator:
             f"Lời giải chuẩn từ nguồn ({comp_name}):\n"
             f"{canonical.summary}"
         )
-        sk_res = await adapter.generate(
+        sk_res = await adapter_sk.generate(
             system_prompt=SKEPTIC_PROMPT_V1.system_instruction,
             user_prompt=skeptic_prompt,
             response_schema=SkepticOutput,
@@ -232,7 +236,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="skeptic",
-            model_name=adapter.model_name,
+            model_name=adapter_sk.model_name,
             prompt_tokens=sk_res.prompt_tokens,
             completion_tokens=sk_res.completion_tokens,
             actual_cost=sk_res.cost_usd,
@@ -254,7 +258,7 @@ class CouncilOrchestrator:
             f"[THÔNG TIN NGUỒN GỐC]: {source_note}\n"
             f"Lời giải chuẩn: {canonical.summary}\n"
         )
-        jd_res = await adapter.generate(
+        jd_res = await adapter_jd.generate(
             system_prompt=JUDGE_SYSTEM_PROMPT,
             user_prompt=judge_prompt,
             response_schema=JudgeOutput,
@@ -263,7 +267,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="judge",
-            model_name=adapter.model_name,
+            model_name=adapter_jd.model_name,
             prompt_tokens=jd_res.prompt_tokens,
             completion_tokens=jd_res.completion_tokens,
             actual_cost=jd_res.cost_usd,
@@ -292,7 +296,12 @@ class CouncilOrchestrator:
         self, db: AsyncSession, run: Run, normalized_statement: str | None = None
     ) -> str:
         run_id = run.id
-        adapter = get_llm_adapter("mock-math-council")
+        is_live = (settings.DEFAULT_LLM_PROVIDER == "live") or ((run.config or {}).get("mode") == "live")
+        adapter_a = get_llm_adapter(settings.ROLE_SOLVER_A_MODEL if is_live else "mock-math-council")
+        adapter_b = get_llm_adapter(settings.ROLE_SOLVER_B_MODEL if is_live else "mock-math-council")
+        adapter_sk = get_llm_adapter(settings.ROLE_SKEPTIC_MODEL if is_live else "mock-math-council")
+        adapter_rev = get_llm_adapter(settings.ROLE_SOLVER_A_MODEL if is_live else "mock-math-council")
+        adapter_jd = get_llm_adapter(settings.ROLE_JUDGE_MODEL if is_live else "mock-math-council")
 
         if not normalized_statement:
             problem = await db.get(Problem, run.problem_id)
@@ -323,12 +332,12 @@ class CouncilOrchestrator:
 
         # Parallel LLM generation
         res_a, res_b = await asyncio.gather(
-            adapter.generate(
+            adapter_a.generate(
                 system_prompt=SOLVER_SYSTEM_PROMPT,
                 user_prompt=prompt_a,
                 response_schema=SolverOutput,
             ),
-            adapter.generate(
+            adapter_b.generate(
                 system_prompt=SOLVER_SYSTEM_PROMPT,
                 user_prompt=prompt_b,
                 response_schema=SolverOutput,
@@ -340,7 +349,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="solver_a",
-            model_name=adapter.model_name,
+            model_name=adapter_a.model_name,
             prompt_tokens=res_a.prompt_tokens,
             completion_tokens=res_a.completion_tokens,
             actual_cost=res_a.cost_usd,
@@ -353,7 +362,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="solver_b",
-            model_name=adapter.model_name,
+            model_name=adapter_b.model_name,
             prompt_tokens=res_b.prompt_tokens,
             completion_tokens=res_b.completion_tokens,
             actual_cost=res_b.cost_usd,
@@ -408,7 +417,7 @@ class CouncilOrchestrator:
             f"Solver A: {solver_a_out.summary}\nĐáp số: {solver_a_out.final_answer}\n\n"
             f"Solver B: {solver_b_out.summary}\nĐáp số: {solver_b_out.final_answer}"
         )
-        sk_res = await adapter.generate(
+        sk_res = await adapter_sk.generate(
             system_prompt=SKEPTIC_SYSTEM_PROMPT,
             user_prompt=skeptic_prompt,
             response_schema=SkepticOutput,
@@ -417,7 +426,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="skeptic",
-            model_name=adapter.model_name,
+            model_name=adapter_sk.model_name,
             prompt_tokens=sk_res.prompt_tokens,
             completion_tokens=sk_res.completion_tokens,
             actual_cost=sk_res.cost_usd,
@@ -448,7 +457,7 @@ class CouncilOrchestrator:
 
         reserved_rev = await budget_manager.check_and_reserve(db, run_id, Decimal("0.010000"))
         rev_prompt = f"Phản biện từ Skeptic: {skeptic_out.challenges[0].argument if skeptic_out.challenges else 'Không có'}"
-        rev_res = await adapter.generate(
+        rev_res = await adapter_rev.generate(
             system_prompt=REVISER_SYSTEM_PROMPT,
             user_prompt=rev_prompt,
             response_schema=SolverOutput,
@@ -457,7 +466,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="solver_a",
-            model_name=adapter.model_name,
+            model_name=adapter_rev.model_name,
             prompt_tokens=rev_res.prompt_tokens,
             completion_tokens=rev_res.completion_tokens,
             actual_cost=rev_res.cost_usd,
@@ -493,7 +502,7 @@ class CouncilOrchestrator:
             f"Lời giải v1: {solver_a_out.final_answer}\n"
             f"Lời giải v2 sau sửa đổi: {reviser_out.final_answer}"
         )
-        jd_res = await adapter.generate(
+        jd_res = await adapter_jd.generate(
             system_prompt=JUDGE_SYSTEM_PROMPT,
             user_prompt=judge_prompt,
             response_schema=JudgeOutput,
@@ -502,7 +511,7 @@ class CouncilOrchestrator:
             db=db,
             run_id=run_id,
             agent_role="judge",
-            model_name=adapter.model_name,
+            model_name=adapter_jd.model_name,
             prompt_tokens=jd_res.prompt_tokens,
             completion_tokens=jd_res.completion_tokens,
             actual_cost=jd_res.cost_usd,

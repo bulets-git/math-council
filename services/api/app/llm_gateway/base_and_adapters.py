@@ -1,5 +1,6 @@
 import abc
 import json
+import logging
 import re
 import time
 from decimal import Decimal
@@ -7,6 +8,8 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel
 from app.core.config import settings
+
+logger = logging.getLogger("llm_gateway.base_and_adapters")
 from app.schemas.agent_contracts import (
     ChallengeAdjudicationItemSchema,
     ChallengeItemSchema,
@@ -29,9 +32,12 @@ MODEL_PRICING_PER_1M: dict[str, tuple[Decimal, Decimal]] = {
     "gpt-4o": (Decimal("2.50"), Decimal("10.00")),
     "gpt-4o-mini": (Decimal("0.15"), Decimal("0.60")),
     "o3-mini": (Decimal("1.10"), Decimal("4.40")),
+    "openai/o3-mini": (Decimal("1.10"), Decimal("4.40")),
     "claude-3-7-sonnet-latest": (Decimal("3.00"), Decimal("15.00")),
     "deepseek-chat": (Decimal("0.27"), Decimal("1.10")),
+    "deepseek/deepseek-chat": (Decimal("0.27"), Decimal("1.10")),
     "deepseek-reasoner": (Decimal("0.55"), Decimal("2.19")),
+    "deepseek/deepseek-reasoner": (Decimal("0.55"), Decimal("2.19")),
 }
 
 
@@ -111,6 +117,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         timeout_sec: float = 90.0,
     ) -> tuple[T, LLMCallResult]:
         if not self.api_key:
+            logger.error("Thiếu API Key cho provider '%s' (base_url: %s)", self.provider_name, self.base_url)
             raise RuntimeError(f"Thiếu API Key cho provider '{self.provider_name}'.")
 
         full_system_prompt = build_schema_instruction(system_prompt, response_schema)
@@ -121,13 +128,29 @@ class OpenAIAdapter(BaseLLMAdapter):
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.2,
         }
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        # Reasoning models (o1, o3, o3-mini) do not accept custom temperature in OpenAI/OpenRouter APIs
+        if not any(k in model_name.lower() for k in ["o1", "o3", "reasoner"]):
+            payload["temperature"] = 0.2
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://mathcouncil.ai",
+            "X-Title": "Math Council Olympiad AI",
+        }
 
         start = time.perf_counter()
         async with httpx.AsyncClient(timeout=timeout_sec) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+            if resp.status_code >= 400:
+                logger.error(
+                    "OpenAIAdapter HTTP Error %d from %s/chat/completions for model '%s': %s",
+                    resp.status_code,
+                    self.base_url,
+                    model_name,
+                    resp.text,
+                )
             resp.raise_for_status()
             data = resp.json()
 
@@ -195,6 +218,8 @@ class AnthropicAdapter(BaseLLMAdapter):
         start = time.perf_counter()
         async with httpx.AsyncClient(timeout=timeout_sec) as client:
             resp = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+            if resp.status_code >= 400:
+                logger.error("AnthropicAdapter HTTP Error %d for model '%s': %s", resp.status_code, model_name, resp.text)
             resp.raise_for_status()
             data = resp.json()
 
@@ -245,6 +270,8 @@ class GeminiAdapter(BaseLLMAdapter):
         start = time.perf_counter()
         async with httpx.AsyncClient(timeout=timeout_sec) as client:
             resp = await client.post(url, params={"key": settings.GEMINI_API_KEY}, json=payload)
+            if resp.status_code >= 400:
+                logger.error("GeminiAdapter HTTP Error %d for model '%s': %s", resp.status_code, model_name, resp.text)
             resp.raise_for_status()
             data = resp.json()
 
@@ -285,6 +312,16 @@ class DeterministicMockAdapter(BaseLLMAdapter):
 
         if response_schema is NormalizationOutputSchema:
             needs_review = r"a^2 + b^2 + c^2 \le 1" in user_prompt or "NEEDS_REVIEW" in user_prompt
+            subj = "Toán Olympic"
+            p_lower = user_prompt.lower()
+            if any(k in p_lower for k in ["bàn cờ", "quân tượng", "quân hậu", "quân mã", "tổ hợp", "rời rạc", "lưới ô vuông", "đồ thị", "dirichlet", "pigeonhole", "đường chéo", "bishop", "chessboard"]):
+                subj = "Tổ hợp / Toán rời rạc"
+            elif any(k in p_lower for k in ["ước số", "chia hết", "đồng dư", "nguyên tố", "nghiệm nguyên", "gcd", "21n + 4"]):
+                subj = "Số học"
+            elif any(k in p_lower for k in ["tam giác", "đường tròn", "hình học", "góc"]):
+                subj = "Hình học"
+            elif any(k in p_lower for k in ["bất đẳng thức", "am-gm", "cauchy"]):
+                subj = "Bất đẳng thức"
             obj = NormalizationOutputSchema(
                 statement_normalized=user_prompt.strip(),
                 needs_clarification=needs_review,
@@ -293,7 +330,7 @@ class DeterministicMockAdapter(BaseLLMAdapter):
                     if needs_review
                     else None
                 ),
-                detected_subject="Toán Olympic",
+                detected_subject=subj,
             )
         elif response_schema is SolverOutputSchema:
             obj = SolverOutputSchema(
@@ -507,6 +544,12 @@ class MultiProviderRouter:
 
         adapter = self.adapters.get(provider_key)
         if not adapter:
+            logger.error(
+                "MultiProviderRouter: Provider '%s' from spec '%s' is not supported. Supported: %s",
+                provider_key,
+                role_model_spec,
+                list(self.adapters.keys()),
+            )
             raise ValueError(f"Provider '{provider_key}' không được hỗ trợ. Hỗ trợ: {list(self.adapters.keys())}")
         return adapter, model_name
 
@@ -521,14 +564,25 @@ class MultiProviderRouter:
         timeout_sec: float = 90.0,
     ) -> tuple[T, LLMCallResult]:
         adapter, model_name = self.resolve_spec(role_model_spec)
-        return await adapter.generate_structured(
-            model_name=model_name,
-            prompt_version=prompt_version,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_schema=response_schema,
-            timeout_sec=timeout_sec,
-        )
+        try:
+            return await adapter.generate_structured(
+                model_name=model_name,
+                prompt_version=prompt_version,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                timeout_sec=timeout_sec,
+            )
+        except Exception as e:
+            logger.error(
+                "MultiProviderRouter: LLM call FAILED for role_model_spec='%s' (model='%s', provider='%s'): %s",
+                role_model_spec,
+                model_name,
+                getattr(adapter, "provider_name", "unknown"),
+                e,
+                exc_info=True,
+            )
+            raise
 
 
 def get_available_models_catalog() -> list[dict[str, Any]]:
@@ -553,6 +607,20 @@ def get_available_models_catalog() -> list[dict[str, Any]]:
             "model_name": "o3-mini",
             "configured": bool(settings.OPENAI_API_KEY),
             "recommended_roles": ["solver_a", "solver_b", "skeptic"],
+        },
+        {
+            "id": "openai_compatible:openai/o3-mini",
+            "provider": "openai_compatible",
+            "model_name": "openai/o3-mini",
+            "configured": bool(settings.OPENAI_COMPATIBLE_API_KEY),
+            "recommended_roles": ["solver_a", "solver_c", "skeptic"],
+        },
+        {
+            "id": "openai_compatible:deepseek/deepseek-chat",
+            "provider": "openai_compatible",
+            "model_name": "deepseek/deepseek-chat",
+            "configured": bool(settings.OPENAI_COMPATIBLE_API_KEY),
+            "recommended_roles": ["solver_b", "solver_c"],
         },
         {
             "id": "anthropic:claude-3-7-sonnet-latest",

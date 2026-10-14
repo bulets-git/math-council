@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     ROLE_SOURCE_FINDER_MODEL: str = "openai_compatible:google/gemini-2.5-flash:online"
     ROLE_SOLVER_A_MODEL: str = "gemini:gemini-2.5-pro"
     ROLE_SOLVER_B_MODEL: str = "openai:gpt-4o"
-    ROLE_SOLVER_C_MODEL: str = "openai_compatible:deepseek-reasoner"
+    ROLE_SOLVER_C_MODEL: str = "openai_compatible:openai/o3-mini"
     ROLE_SKEPTIC_MODEL: str = "anthropic:claude-3-7-sonnet-latest"
     ROLE_JUDGE_MODEL: str = "openai:gpt-4o"
 
