@@ -48,7 +48,27 @@ class Settings(BaseSettings):
 
     # Cấu hình Model mặc định cho từng vai trò trong Hội đồng (provider:model_name)
     ROLE_NORMALIZER_MODEL: str = "gemini:gemini-2.5-flash"
+    ROLE_RETRIEVER_MODEL: str = "gemini:gemini-2.5-flash"
     ROLE_SOURCE_FINDER_MODEL: str = "gemini:gemini-2.5-flash"
+
+    @field_validator("ROLE_RETRIEVER_MODEL", mode="before")
+    @classmethod
+    def assemble_retriever_model(cls, v: str | None) -> str:
+        import os
+        env_val = os.getenv("ROLE_RETRIEVER_MODEL") or os.getenv("ROLE_SOURCE_FINDER_MODEL")
+        if env_val:
+            return env_val
+        return v or "gemini:gemini-2.5-flash"
+
+    @field_validator("ROLE_SOURCE_FINDER_MODEL", mode="before")
+    @classmethod
+    def assemble_source_finder_model(cls, v: str | None) -> str:
+        import os
+        env_val = os.getenv("ROLE_RETRIEVER_MODEL") or os.getenv("ROLE_SOURCE_FINDER_MODEL")
+        if env_val:
+            return env_val
+        return v or "gemini:gemini-2.5-flash"
+
     ROLE_SOLVER_A_MODEL: str = "alibaba:qwen2.5-math-72b-instruct"
     ROLE_SOLVER_B_MODEL: str = "deepseek:deepseek-reasoner"
 

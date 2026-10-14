@@ -374,6 +374,134 @@ class GeminiAdapter(BaseLLMAdapter):
             latency_ms=elapsed_ms,
         )
 
+    async def generate_with_grounding(
+        self,
+        *,
+        model_name: str = "gemini-2.5-flash",
+        system_prompt: str,
+        user_prompt: str,
+        timeout_sec: float = 12.0,
+    ) -> tuple[dict[str, Any], LLMCallResult]:
+        api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                f"Chưa cấu hình GEMINI_API_KEY cho model '{model_name}'. "
+                "Vui lòng thiết lập biến môi trường GEMINI_API_KEY trên Railway Variables."
+            )
+
+        start = time.perf_counter()
+        summary = ""
+        reference_urls: list[str] = []
+        in_tok = 0
+        out_tok = 0
+        raw_grounding: dict[str, Any] = {}
+
+        sdk_success = False
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=api_key)
+            config = types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                tools=[{"google_search": {}}],
+                temperature=0.2,
+            )
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config=config,
+                ),
+                timeout=timeout_sec,
+            )
+            if response.candidates:
+                cand = response.candidates[0]
+                if cand.content and cand.content.parts:
+                    summary = "".join([p.text for p in cand.content.parts if getattr(p, "text", None)]).strip()
+                elif hasattr(response, "text") and response.text:
+                    summary = (response.text or "").strip()
+
+                gm = getattr(cand, "grounding_metadata", None)
+                if gm:
+                    chunks = getattr(gm, "grounding_chunks", None) or []
+                    for chunk in chunks:
+                        web = getattr(chunk, "web", None)
+                        if web:
+                            uri = getattr(web, "uri", None)
+                            if uri and uri not in reference_urls:
+                                reference_urls.append(uri)
+                    try:
+                        raw_grounding = gm.model_dump() if hasattr(gm, "model_dump") else {}
+                    except Exception:
+                        pass
+            elif hasattr(response, "text") and response.text:
+                summary = response.text.strip()
+
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                in_tok = int(getattr(usage, "prompt_token_count", 0) or 0)
+                out_tok = int(getattr(usage, "candidates_token_count", 0) or 0)
+            sdk_success = True
+        except asyncio.TimeoutError:
+            raise
+        except Exception as sdk_err:
+            logger.warning(
+                "Google GenAI SDK gặp lỗi (%s: %s). Thử kết nối trực tiếp qua REST API với tools=[{'google_search': {}}]...",
+                type(sdk_err).__name__,
+                sdk_err,
+            )
+
+        if not sdk_success:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+            payload = {
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                "tools": [{"google_search": {}}],
+                "generationConfig": {"temperature": 0.2},
+            }
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                resp = await client.post(url, params={"key": api_key}, json=payload)
+                if resp.status_code >= 400:
+                    logger.error("GeminiAdapter HTTP Error %d for model '%s': %s", resp.status_code, model_name, resp.text)
+                resp.raise_for_status()
+                data = resp.json()
+
+            candidates = data.get("candidates", [])
+            if candidates:
+                cand = candidates[0]
+                parts = cand.get("content", {}).get("parts", [])
+                summary = "".join([p.get("text", "") for p in parts]).strip()
+                gm = cand.get("groundingMetadata", {})
+                raw_grounding = gm
+                for chunk in gm.get("groundingChunks", []):
+                    web = chunk.get("web", {})
+                    uri = web.get("uri")
+                    if uri and uri not in reference_urls:
+                        reference_urls.append(uri)
+
+            usage = data.get("usageMetadata", {})
+            in_tok = int(usage.get("promptTokenCount", 0))
+            out_tok = int(usage.get("candidatesTokenCount", 0))
+
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        result = {
+            "summary": summary,
+            "reference_urls": reference_urls,
+            "grounding_metadata": raw_grounding,
+        }
+        meta = LLMCallResult(
+            parsed_data={"summary": summary, "reference_urls": reference_urls},
+            provider=self.provider_name,
+            model_name=model_name,
+            prompt_version="grounding_v1",
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            cost_usd=calculate_call_cost(model_name, in_tok, out_tok),
+            latency_ms=elapsed_ms,
+        )
+        return result, meta
+
 
 class DeterministicMockAdapter(BaseLLMAdapter):
     provider_name = "mock"
@@ -600,6 +728,35 @@ class DeterministicMockAdapter(BaseLLMAdapter):
         )
         return validated, meta
 
+    async def generate_with_grounding(
+        self,
+        *,
+        model_name: str = "mock",
+        system_prompt: str,
+        user_prompt: str,
+        timeout_sec: float = 12.0,
+    ) -> tuple[dict[str, Any], LLMCallResult]:
+        res = {
+            "summary": "Mock Grounding: Bài toán số học/tổ hợp được tìm thấy trên cộng đồng AoPS từ các kỳ thi Olympic.",
+            "reference_urls": [
+                "https://artofproblemsolving.com/community",
+                "https://en.wikipedia.org/wiki/International_Mathematical_Olympiad",
+            ],
+            "grounding_metadata": {},
+        }
+        meta = LLMCallResult(
+            parsed_data=res,
+            provider=self.provider_name,
+            model_name=model_name,
+            prompt_version="mock_grounding_v1",
+            input_tokens=100,
+            output_tokens=60,
+            cost_usd=Decimal("0.000000"),
+            latency_ms=10,
+            provider_request_id="mock-grounding-001",
+        )
+        return res, meta
+
 
 class MultiProviderRouter:
     def __init__(self, force_mock: bool | None = None) -> None:
@@ -738,6 +895,26 @@ class MultiProviderRouter:
                 exc_info=True,
             )
             raise
+
+    async def retrieve_source_with_grounding(
+        self,
+        *,
+        role_model_spec: str,
+        system_prompt: str,
+        user_prompt: str,
+        timeout_sec: float = 12.0,
+    ) -> tuple[dict[str, Any], LLMCallResult]:
+        adapter, model_name = self.resolve_spec(role_model_spec)
+        if hasattr(adapter, "generate_with_grounding"):
+            return await adapter.generate_with_grounding(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_sec=timeout_sec,
+            )
+        raise NotImplementedError(
+            f"Provider '{getattr(adapter, 'provider_name', type(adapter).__name__)}' không hỗ trợ tra cứu Google Search Grounding."
+        )
 
 
 def get_available_models_catalog() -> list[dict[str, Any]]:

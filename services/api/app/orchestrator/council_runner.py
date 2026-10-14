@@ -28,6 +28,7 @@ from app.schemas.agent_contracts import (
     SolverOutputSchema,
     SolverRevisionOutputSchema,
     SourceDiscoveryOutputSchema,
+    SourceMetadataSchema,
 )
 
 
@@ -42,7 +43,8 @@ class MathCouncilOrchestrator:
         self.router = router or MultiProviderRouter()
         default_roles = {
             "normalizer": settings.ROLE_NORMALIZER_MODEL,
-            "source_finder": settings.ROLE_SOURCE_FINDER_MODEL,
+            "retriever": settings.ROLE_RETRIEVER_MODEL,
+            "source_finder": settings.ROLE_RETRIEVER_MODEL,
             "solver_a": settings.ROLE_SOLVER_A_MODEL,
             "solver_b": settings.ROLE_SOLVER_B_MODEL,
             "solver_c": settings.ROLE_SOLVER_C_MODEL,
@@ -98,48 +100,79 @@ class MathCouncilOrchestrator:
 
         problem_text = norm_out.statement_normalized
 
-        # 1.5. RETRIEVING_SOURCE (Tìm kiếm Nguồn gốc Đề toán)
+        # 1.5. RETRIEVING_SOURCE (Tìm kiếm Nguồn gốc Đề toán với Google Search Grounding)
         source_disc_out: SourceDiscoveryOutputSchema | None = None
-        source_finder_model = self.role_models.get("source_finder")
-        if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True) and source_finder_model:
-            await self._emit("retrieving_source", {"model": source_finder_model})
+        retriever_model = (
+            self.role_models.get("retriever")
+            or self.role_models.get("source_finder")
+            or getattr(settings, "ROLE_RETRIEVER_MODEL", "gemini:gemini-2.5-flash")
+        )
+        if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True) and retriever_model:
+            await self._emit("retrieving_source", {"model": retriever_model})
             try:
-                src_out, src_meta = await asyncio.wait_for(
-                    self.router.call_for_role(
-                        role_model_spec=source_finder_model,
-                        prompt_version=SOURCE_FINDER_PROMPT_V1.version,
-                        system_prompt=SOURCE_FINDER_PROMPT_V1.system_instruction,
-                        user_prompt=wrap_untrusted_content("problem_statement", problem_text),
-                        response_schema=SourceDiscoveryOutputSchema,
-                    ),
-                    timeout=25.0,
+                retriever_prompt = (
+                    f"Hãy tra cứu trên Internet xuất xứ và nguồn gốc của bài toán sau: kỳ thi nào (IMO, VMO, Putnam, HSG, v.v.), "
+                    f"năm tổ chức, bài số mấy, nguồn đăng tải (AoPS, diễn đàn toán học). "
+                    f"Tóm tắt xuất xứ, đề bài gốc và lời giải chuẩn ngắn gọn nếu có.\n\n"
+                    f"Đề bài cần tra cứu:\n{problem_text}"
                 )
-                self._record_call(src_meta)
-                source_disc_out = src_out
+                grounding_res, src_meta = await asyncio.wait_for(
+                    self.router.retrieve_source_with_grounding(
+                        role_model_spec=retriever_model,
+                        system_prompt=(
+                            "Bạn là trợ lý tra cứu nguồn gốc và xuất xứ đề thi toán học học thuật bằng công cụ Google Search Grounding. "
+                            "Hãy tìm kiếm chính xác bài toán trên Internet, trích xuất kỳ thi, năm tổ chức, bài số mấy và tóm tắt nguồn gốc."
+                        ),
+                        user_prompt=retriever_prompt,
+                        timeout_sec=12.0,
+                    ),
+                    timeout=12.0,
+                )
+                if src_meta:
+                    self._record_call(src_meta)
+
+                summary_text = (grounding_res.get("summary") or "").strip() if grounding_res else ""
+                ref_urls = grounding_res.get("reference_urls", []) if grounding_res else []
+                source_found = bool(summary_text and len(summary_text) > 10)
+
+                source_disc_out = SourceDiscoveryOutputSchema(
+                    match_type="exact_match" if (source_found and any(k in summary_text.upper() for k in ["IMO", "VMO", "PUTNAM", "USAMO"])) else ("modified_variant" if source_found else "no_match"),
+                    source_found=source_found,
+                    origin_summary=summary_text if source_found else None,
+                    reference_urls=ref_urls,
+                    source_metadata=SourceMetadataSchema(
+                        competition_name="Internet Grounding Discovery",
+                        reference_urls=ref_urls,
+                    ) if source_found else None,
+                    variant_warning=None,
+                    canonical_solution=None,
+                )
+
                 await self._emit(
                     "retrieving_source",
                     {
-                        "match_type": src_out.match_type,
-                        "source_found": src_out.source_found,
-                        "source_metadata": src_out.source_metadata.model_dump() if src_out.source_metadata else None,
-                        "variant_warning": src_out.variant_warning,
+                        "summary": summary_text,
+                        "reference_urls": ref_urls,
+                        "source_found": source_found,
+                        "match_type": source_disc_out.match_type,
                     },
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Quá thời gian tìm kiếm nguồn đề (timeout > 25s) ở bước retrieving_source. Bỏ qua và chuyển thẳng sang solving."
+                    "Quá thời gian tìm kiếm nguồn đề (timeout > 12s) ở bước retrieving_source. Gán kết quả là None và lập tức chuyển trạng thái sang solving."
                 )
                 source_disc_out = None
             except Exception as e:
                 logger.warning(
-                    "Không thể tìm kiếm nguồn đề hoặc gặp lỗi ở bước retrieving_source (%s). Bỏ qua và chuyển thẳng sang solving.",
+                    "Không thể tìm kiếm nguồn đề hoặc gặp lỗi ở bước retrieving_source (%s). Gán kết quả là None và lập tức chuyển trạng thái sang solving.",
                     e,
                 )
                 source_disc_out = None
-        elif not source_finder_model:
+        elif not retriever_model:
             logger.warning(
-                "Công cụ tìm kiếm nguồn đề (source_finder) không được cấu hình. Chuyển thẳng sang solving."
+                "Công cụ tìm kiếm nguồn đề (ROLE_RETRIEVER_MODEL) không được cấu hình. Gán kết quả là None và chuyển thẳng sang solving."
             )
+            source_disc_out = None
 
         # TRƯỜNG HỢP 1: exact_match và có canonical_solution -> Fast-track nếu được bật
         if (
@@ -216,8 +249,13 @@ class MathCouncilOrchestrator:
         # TRƯỜNG HỢP 2 & 3: modified_variant hoặc no_match hoặc không bật fast-track
         reference_notes = ""
         if source_disc_out and source_disc_out.source_found:
+            if source_disc_out.origin_summary:
+                reference_notes += f"\n[THÔNG TIN NGUỒN GỐC INTERNET]: {source_disc_out.origin_summary}"
+            if source_disc_out.reference_urls:
+                reference_notes += f"\n[LIÊN KẾT NGUỒN THAM KHẢO]: {', '.join(source_disc_out.reference_urls)}"
             sm = source_disc_out.source_metadata
-            reference_notes += f"\n[TÀI LIỆU NGUỒN THAM KHẢO]: Kỳ thi: {sm.competition_name if sm else 'N/A'}."
+            if sm and sm.competition_name and sm.competition_name != "Internet Grounding Discovery":
+                reference_notes += f"\n[TÀI LIỆU NGUỒN THAM KHẢO]: Kỳ thi: {sm.competition_name}."
             if source_disc_out.variant_warning:
                 reference_notes += f"\n[CẢNH BÁO BIẾN THỂ]: {source_disc_out.variant_warning}"
             if source_disc_out.canonical_solution:

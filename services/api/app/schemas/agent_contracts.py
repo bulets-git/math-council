@@ -90,9 +90,15 @@ class SolverOutputSchema(BaseModel):
 
 class SourceDiscoveryOutputSchema(BaseModel):
     match_type: Literal["exact_match", "modified_variant", "no_match"] = Field(
-        ..., description="Phân loại mức độ khớp với bài toán gốc trong ngân hàng đề"
+        default="modified_variant", description="Phân loại mức độ khớp với bài toán gốc trong ngân hàng đề"
     )
     source_found: bool = Field(default=False, description="Có tìm thấy nguồn gốc đề bài không")
+    origin_summary: str | None = Field(
+        default=None, description="Nội dung tóm tắt nguồn gốc từ tìm kiếm Internet"
+    )
+    reference_urls: list[str] = Field(
+        default_factory=list, description="Danh sách URL tham khảo từ grounding_metadata"
+    )
     source_metadata: SourceMetadataSchema | None = Field(
         default=None, description="Thông tin chi tiết về kỳ thi và bài toán gốc"
     )

@@ -140,25 +140,48 @@ class CouncilOrchestrator:
             await db.commit()
 
             # ---------------------------------------------------------
-            # 1.5. RETRIEVING_SOURCE PHASE (Tìm kiếm Nguồn gốc Đề toán)
+            # 1.5. RETRIEVING_SOURCE PHASE (Tìm kiếm Nguồn gốc Đề toán với Google Search Grounding)
             # ---------------------------------------------------------
-            source_finder_model = getattr(settings, "ROLE_SOURCE_FINDER_MODEL", None)
-            if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True) and source_finder_model:
+            retriever_model = getattr(settings, "ROLE_RETRIEVER_MODEL", None) or getattr(settings, "ROLE_SOURCE_FINDER_MODEL", "gemini:gemini-2.5-flash")
+            if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True) and retriever_model:
                 run.status = "retrieving_source"
                 await db.commit()
                 await event_publisher.publish(run_id, "status_changed", {"status": "retrieving_source"})
 
                 try:
                     router = MultiProviderRouter(force_mock=(not is_live))
-                    src_out, src_meta = await asyncio.wait_for(
-                        router.call_for_role(
-                            role_model_spec=source_finder_model,
-                            prompt_version=SOURCE_FINDER_PROMPT_V1.version,
-                            system_prompt=SOURCE_FINDER_PROMPT_V1.system_instruction,
-                            user_prompt=wrap_untrusted_content("problem_statement", norm_data.normalized_statement),
-                            response_schema=SourceDiscoveryOutputSchema,
+                    retriever_prompt = (
+                        f"Hãy tra cứu trên Internet xuất xứ và nguồn gốc của bài toán sau: kỳ thi nào, năm nào, bài số mấy, nguồn bài (AoPS, diễn đàn toán học). "
+                        f"Tóm tắt xuất xứ, đề bài gốc và lời giải chuẩn ngắn gọn nếu có.\n\n"
+                        f"Đề bài cần tra cứu:\n{norm_data.normalized_statement}"
+                    )
+                    grounding_res, src_meta = await asyncio.wait_for(
+                        router.retrieve_source_with_grounding(
+                            role_model_spec=retriever_model,
+                            system_prompt=(
+                                "Bạn là trợ lý tra cứu nguồn gốc và xuất xứ đề thi toán học học thuật bằng công cụ Google Search Grounding. "
+                                "Hãy tìm kiếm chính xác bài toán trên Internet, trích xuất kỳ thi, năm tổ chức, bài số mấy và tóm tắt nguồn gốc."
+                            ),
+                            user_prompt=retriever_prompt,
+                            timeout_sec=12.0,
                         ),
-                        timeout=25.0,
+                        timeout=12.0,
+                    )
+                    summary_text = (grounding_res.get("summary") or "").strip() if grounding_res else ""
+                    ref_urls = grounding_res.get("reference_urls", []) if grounding_res else []
+                    source_found = bool(summary_text and len(summary_text) > 10)
+
+                    src_out = SourceDiscoveryOutputSchema(
+                        match_type="exact_match" if (source_found and any(k in summary_text.upper() for k in ["IMO", "VMO", "PUTNAM", "USAMO"])) else ("modified_variant" if source_found else "no_match"),
+                        source_found=source_found,
+                        origin_summary=summary_text if source_found else None,
+                        reference_urls=ref_urls,
+                        source_metadata=SourceMetadataSchema(
+                            competition_name="Internet Grounding Discovery",
+                            reference_urls=ref_urls,
+                        ) if source_found else None,
+                        variant_warning=None,
+                        canonical_solution=None,
                     )
 
                     # Lưu thông tin nguồn tìm được vào run.config
@@ -171,10 +194,10 @@ class CouncilOrchestrator:
                         run_id,
                         "source_discovered",
                         {
+                            "summary": summary_text,
+                            "reference_urls": ref_urls,
+                            "source_found": source_found,
                             "match_type": src_out.match_type,
-                            "source_found": src_out.source_found,
-                            "metadata": src_out.source_metadata.model_dump() if src_out.source_metadata else None,
-                            "variant_warning": src_out.variant_warning,
                         },
                     )
 
@@ -187,18 +210,18 @@ class CouncilOrchestrator:
                         return await self._execute_fast_track(db, run, norm_data.normalized_statement, src_out)
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Quá thời gian tìm kiếm nguồn đề (timeout > 25s) cho run %s ở bước retrieving_source. Bỏ qua và chuyển thẳng sang solving.",
+                        "Quá thời gian tìm kiếm nguồn đề (timeout > 12s) cho run %s ở bước retrieving_source. Gán kết quả là None và chuyển thẳng sang solving.",
                         run_id,
                     )
                 except Exception as src_err:
                     logger.warning(
-                        "Bước retrieving_source cho run %s gặp lỗi: %s. Bỏ qua và chuyển thẳng sang solving.",
+                        "Bước retrieving_source cho run %s gặp lỗi: %s. Gán kết quả là None và chuyển thẳng sang solving.",
                         run_id,
                         src_err,
                     )
-            elif not source_finder_model:
+            elif not retriever_model:
                 logger.warning(
-                    "Công cụ tìm kiếm nguồn đề không được cấu hình cho run %s. Chuyển thẳng sang solving.",
+                    "Công cụ tìm kiếm nguồn đề không được cấu hình cho run %s. Gán kết quả là None và chuyển thẳng sang solving.",
                     run_id,
                 )
 
@@ -357,8 +380,13 @@ class CouncilOrchestrator:
         source_ref = ""
         discovered = (run.config or {}).get("discovered_source")
         if discovered and discovered.get("source_found"):
+            if discovered.get("origin_summary"):
+                source_ref += f"\n[THÔNG TIN NGUỒN GỐC INTERNET]: {discovered['origin_summary']}"
+            if discovered.get("reference_urls"):
+                source_ref += f"\n[LIÊN KẾT NGUỒN THAM KHẢO]: {', '.join(discovered['reference_urls'])}"
             sm = discovered.get("source_metadata") or {}
-            source_ref = f"\n[THAM KHẢO]: Bài toán gốc từ {sm.get('competition_name', '')} ({sm.get('year', '')})."
+            if sm.get("competition_name") and sm.get("competition_name") != "Internet Grounding Discovery":
+                source_ref += f"\n[THAM KHẢO]: Bài toán gốc từ {sm.get('competition_name', '')} ({sm.get('year', '')})."
             if discovered.get("variant_warning"):
                 source_ref += f"\n[CẢNH BÁO BIẾN THỂ]: {discovered.get('variant_warning')}"
 
