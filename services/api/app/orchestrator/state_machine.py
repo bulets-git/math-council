@@ -142,44 +142,65 @@ class CouncilOrchestrator:
             # ---------------------------------------------------------
             # 1.5. RETRIEVING_SOURCE PHASE (Tìm kiếm Nguồn gốc Đề toán)
             # ---------------------------------------------------------
-            if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True):
+            source_finder_model = getattr(settings, "ROLE_SOURCE_FINDER_MODEL", None)
+            if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True) and source_finder_model:
                 run.status = "retrieving_source"
                 await db.commit()
                 await event_publisher.publish(run_id, "status_changed", {"status": "retrieving_source"})
 
-                router = MultiProviderRouter(force_mock=(not is_live))
-                src_out, src_meta = await router.call_for_role(
-                    role_model_spec=settings.ROLE_SOURCE_FINDER_MODEL,
-                    prompt_version=SOURCE_FINDER_PROMPT_V1.version,
-                    system_prompt=SOURCE_FINDER_PROMPT_V1.system_instruction,
-                    user_prompt=wrap_untrusted_content("problem_statement", norm_data.normalized_statement),
-                    response_schema=SourceDiscoveryOutputSchema,
-                )
+                try:
+                    router = MultiProviderRouter(force_mock=(not is_live))
+                    src_out, src_meta = await asyncio.wait_for(
+                        router.call_for_role(
+                            role_model_spec=source_finder_model,
+                            prompt_version=SOURCE_FINDER_PROMPT_V1.version,
+                            system_prompt=SOURCE_FINDER_PROMPT_V1.system_instruction,
+                            user_prompt=wrap_untrusted_content("problem_statement", norm_data.normalized_statement),
+                            response_schema=SourceDiscoveryOutputSchema,
+                        ),
+                        timeout=25.0,
+                    )
 
-                # Lưu thông tin nguồn tìm được vào run.config
-                run_cfg = dict(run.config or {})
-                run_cfg["discovered_source"] = src_out.model_dump()
-                run.config = run_cfg
-                await db.commit()
+                    # Lưu thông tin nguồn tìm được vào run.config
+                    run_cfg = dict(run.config or {})
+                    run_cfg["discovered_source"] = src_out.model_dump()
+                    run.config = run_cfg
+                    await db.commit()
 
-                await event_publisher.publish(
+                    await event_publisher.publish(
+                        run_id,
+                        "source_discovered",
+                        {
+                            "match_type": src_out.match_type,
+                            "source_found": src_out.source_found,
+                            "metadata": src_out.source_metadata.model_dump() if src_out.source_metadata else None,
+                            "variant_warning": src_out.variant_warning,
+                        },
+                    )
+
+                    # TRƯỜNG HỢP 1: exact_match và có canonical_solution -> fast track
+                    if (
+                        src_out.match_type == "exact_match"
+                        and src_out.canonical_solution
+                        and run_cfg.get("fast_track_known_problems", True)
+                    ):
+                        return await self._execute_fast_track(db, run, norm_data.normalized_statement, src_out)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Quá thời gian tìm kiếm nguồn đề (timeout > 25s) cho run %s ở bước retrieving_source. Bỏ qua và chuyển thẳng sang solving.",
+                        run_id,
+                    )
+                except Exception as src_err:
+                    logger.warning(
+                        "Bước retrieving_source cho run %s gặp lỗi: %s. Bỏ qua và chuyển thẳng sang solving.",
+                        run_id,
+                        src_err,
+                    )
+            elif not source_finder_model:
+                logger.warning(
+                    "Công cụ tìm kiếm nguồn đề không được cấu hình cho run %s. Chuyển thẳng sang solving.",
                     run_id,
-                    "source_discovered",
-                    {
-                        "match_type": src_out.match_type,
-                        "source_found": src_out.source_found,
-                        "metadata": src_out.source_metadata.model_dump() if src_out.source_metadata else None,
-                        "variant_warning": src_out.variant_warning,
-                    },
                 )
-
-                # TRƯỜNG HỢP 1: exact_match và có canonical_solution -> fast track
-                if (
-                    src_out.match_type == "exact_match"
-                    and src_out.canonical_solution
-                    and run_cfg.get("fast_track_known_problems", True)
-                ):
-                    return await self._execute_fast_track(db, run, norm_data.normalized_statement, src_out)
 
             # Continue to solving
             return await self._execute_from_solving(db, run, norm_data.normalized_statement)

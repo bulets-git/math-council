@@ -100,25 +100,45 @@ class MathCouncilOrchestrator:
 
         # 1.5. RETRIEVING_SOURCE (Tìm kiếm Nguồn gốc Đề toán)
         source_disc_out: SourceDiscoveryOutputSchema | None = None
-        if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True):
-            await self._emit("retrieving_source", {"model": self.role_models["source_finder"]})
-            src_out, src_meta = await self.router.call_for_role(
-                role_model_spec=self.role_models["source_finder"],
-                prompt_version=SOURCE_FINDER_PROMPT_V1.version,
-                system_prompt=SOURCE_FINDER_PROMPT_V1.system_instruction,
-                user_prompt=wrap_untrusted_content("problem_statement", problem_text),
-                response_schema=SourceDiscoveryOutputSchema,
-            )
-            self._record_call(src_meta)
-            source_disc_out = src_out
-            await self._emit(
-                "retrieving_source",
-                {
-                    "match_type": src_out.match_type,
-                    "source_found": src_out.source_found,
-                    "source_metadata": src_out.source_metadata.model_dump() if src_out.source_metadata else None,
-                    "variant_warning": src_out.variant_warning,
-                },
+        source_finder_model = self.role_models.get("source_finder")
+        if getattr(settings, "ENABLE_SOURCE_DISCOVERY", True) and source_finder_model:
+            await self._emit("retrieving_source", {"model": source_finder_model})
+            try:
+                src_out, src_meta = await asyncio.wait_for(
+                    self.router.call_for_role(
+                        role_model_spec=source_finder_model,
+                        prompt_version=SOURCE_FINDER_PROMPT_V1.version,
+                        system_prompt=SOURCE_FINDER_PROMPT_V1.system_instruction,
+                        user_prompt=wrap_untrusted_content("problem_statement", problem_text),
+                        response_schema=SourceDiscoveryOutputSchema,
+                    ),
+                    timeout=25.0,
+                )
+                self._record_call(src_meta)
+                source_disc_out = src_out
+                await self._emit(
+                    "retrieving_source",
+                    {
+                        "match_type": src_out.match_type,
+                        "source_found": src_out.source_found,
+                        "source_metadata": src_out.source_metadata.model_dump() if src_out.source_metadata else None,
+                        "variant_warning": src_out.variant_warning,
+                    },
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Quá thời gian tìm kiếm nguồn đề (timeout > 25s) ở bước retrieving_source. Bỏ qua và chuyển thẳng sang solving."
+                )
+                source_disc_out = None
+            except Exception as e:
+                logger.warning(
+                    "Không thể tìm kiếm nguồn đề hoặc gặp lỗi ở bước retrieving_source (%s). Bỏ qua và chuyển thẳng sang solving.",
+                    e,
+                )
+                source_disc_out = None
+        elif not source_finder_model:
+            logger.warning(
+                "Công cụ tìm kiếm nguồn đề (source_finder) không được cấu hình. Chuyển thẳng sang solving."
             )
 
         # TRƯỜNG HỢP 1: exact_match và có canonical_solution -> Fast-track nếu được bật
