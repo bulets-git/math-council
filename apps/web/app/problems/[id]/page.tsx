@@ -19,6 +19,7 @@ export default function ProblemDetailPage() {
   // Run creation states
   const [creatingRun, setCreatingRun] = useState(false);
   const [budgetUsd, setBudgetUsd] = useState<number>(1.0);
+  const [runMode, setRunMode] = useState<'live' | 'mock'>('live');
   const [runSuccessNotice, setRunSuccessNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,10 +50,19 @@ export default function ProblemDetailPage() {
     try {
       setCreatingRun(true);
       setRunSuccessNotice(null);
-      const newRun = await createRun(problem.id, { budget_usd: budgetUsd });
+      const isLive = runMode === 'live';
+      const newRun = await createRun(problem.id, {
+        budget_usd: budgetUsd,
+        config: {
+          mode: isLive ? 'live' : 'step2_skeleton',
+          ai_enabled: isLive,
+          max_rounds: 2,
+          solvers: isLive ? ['solver_a', 'solver_b', 'solver_c'] : ['solver_a', 'solver_b'],
+        },
+      });
       // Thêm Run mới vào đầu danh sách
       setProblem((prev) => (prev ? { ...prev, runs: [newRun, ...prev.runs] } : prev));
-      setRunSuccessNotice(`Đã tạo thành công phiên Run thử nghiệm #${newRun.id.slice(0, 8)} ở trạng thái 'queued'.`);
+      setRunSuccessNotice(`Đã tạo thành công phiên Run #${newRun.id.slice(0, 8)} (${isLive ? 'Hội đồng AI Live' : 'Thử nghiệm Mock'}) ở trạng thái 'queued'.`);
     } catch (err: any) {
       alert(`Lỗi khi tạo Run: ${err.message}`);
     } finally {
@@ -170,18 +180,31 @@ export default function ProblemDetailPage() {
 
       {/* Action Banner: Run Trigger */}
       <div className="bg-gradient-to-r from-indigo-50 via-slate-50 to-indigo-50/30 p-6 sm:p-8 rounded-2xl border border-indigo-100 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <div className="inline-flex items-center space-x-2 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">
-            <span>⚙️ Chế độ Bước 2</span>
+            <span>🤖 Hội đồng AI Math Council (Bước 3)</span>
           </div>
-          <h3 className="text-lg font-bold text-slate-900">Khởi tạo phiên giải toán (Run)</h3>
+          <h3 className="text-lg font-bold text-slate-900">Khởi tạo phiên giải toán với Hội đồng AI</h3>
           <p className="text-sm text-slate-600 max-w-xl">
-            Tạo một bản ghi Run ở trạng thái <code>queued</code> cho bài toán này. Hệ thống ở Bước 2
-            xác thực toàn vẹn quy trình mà không gọi AI thực tế.
+            Kích hoạt các AI Agent chuyên môn (Normalizer, Solver A/B/C, Skeptic, Judge) chạy song song, 
+            truy xuất nguồn gốc bài toán và phản biện đa chiều.
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+          {/* Mode Selector */}
+          <div className="flex items-center space-x-2 w-full sm:w-auto">
+            <span className="text-xs font-medium text-slate-500 whitespace-nowrap">Chế độ:</span>
+            <select
+              value={runMode}
+              onChange={(e) => setRunMode(e.target.value as 'live' | 'mock')}
+              className="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            >
+              <option value="live">⚡ Hội đồng AI (Live)</option>
+              <option value="mock">🧪 Thử nghiệm (Mock)</option>
+            </select>
+          </div>
+
           <div className="flex items-center space-x-2 w-full sm:w-auto">
             <span className="text-xs font-medium text-slate-500 whitespace-nowrap">Ngân sách ($):</span>
             <input
@@ -190,14 +213,14 @@ export default function ProblemDetailPage() {
               min="0"
               value={budgetUsd}
               onChange={(e) => setBudgetUsd(parseFloat(e.target.value) || 0)}
-              className="w-24 px-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              className="w-20 px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
             />
           </div>
 
           <button
             onClick={handleCreateRun}
             disabled={creatingRun}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm shadow-indigo-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 whitespace-nowrap"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm shadow-indigo-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 whitespace-nowrap"
           >
             {creatingRun ? (
               <>
@@ -205,7 +228,7 @@ export default function ProblemDetailPage() {
                 <span>Đang khởi tạo...</span>
               </>
             ) : (
-              <span>🚀 Tạo Run thử nghiệm</span>
+              <span>🚀 {runMode === 'live' ? 'Kích hoạt Hội đồng AI' : 'Tạo Run Thử nghiệm'}</span>
             )}
           </button>
         </div>
@@ -252,9 +275,13 @@ export default function ProblemDetailPage() {
                       Trạng thái: {run.status}
                     </span>
 
-                    {/* Mandatory Label "Chưa chạy AI" */}
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                      ⚡ {run.ai_notice || 'Chưa chạy AI'}
+                    {/* AI Notice Badge */}
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                      run.config?.ai_enabled
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}>
+                      ⚡ {run.ai_notice || (run.config?.ai_enabled ? 'Hội đồng Toán học AI' : 'Chưa chạy AI (Bước 2)')}
                     </span>
 
                     <span className="text-xs text-slate-400 font-mono">
@@ -278,9 +305,9 @@ export default function ProblemDetailPage() {
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
                   {/* Run Configuration summary */}
                   <div className="bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 text-[11px] text-slate-600 font-mono">
-                    <span>Chế độ: {run.config?.mode || 'step3_council'}</span>
-                    <span className="block text-slate-400">
-                      AI Enabled: {String(run.config?.ai_enabled ?? true)}
+                    <span>Chế độ: {run.config?.mode || 'live'}</span>
+                    <span className={`block font-semibold ${run.config?.ai_enabled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      AI Enabled: {run.config?.ai_enabled ? 'true (Đã bật)' : 'false (Chưa bật)'}
                     </span>
                   </div>
 
