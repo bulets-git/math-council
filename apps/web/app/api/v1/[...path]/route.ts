@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 function getBackendBaseUrl(): string {
-  const url =
-    process.env.INTERNAL_API_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    'https://api-production-881ea.up.railway.app';
+  let url = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  // If url is not set, or points to internal docker-compose hostname 'api:8000' or 'localhost' on cloud
+  if (!url || url.includes('api:8000') || (process.env.NODE_ENV === 'production' && url.includes('localhost'))) {
+    url = 'https://api-production-881ea.up.railway.app';
+  }
   return url.replace(/\/+$/, '');
 }
 

@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const backendBase = (
-    process.env.INTERNAL_API_URL ||
-    process.env.NEXT_PUBLIC_API_URL ||
-    'https://api-production-881ea.up.railway.app'
-  ).replace(/\/+$/, '');
+  let backendBase = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (!backendBase || backendBase.includes('api:8000') || (process.env.NODE_ENV === 'production' && backendBase.includes('localhost'))) {
+    backendBase = 'https://api-production-881ea.up.railway.app';
+  }
+  backendBase = backendBase.replace(/\/+$/, '');
   const targetUrl = `${backendBase}/health`;
 
   try {
