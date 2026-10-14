@@ -2,14 +2,14 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RunCreate(BaseModel):
     config: dict[str, Any] = Field(
         default_factory=lambda: {
-            "mode": "multi_agent_council",
-            "ai_enabled": True,
+            "mode": "step2_skeleton",
+            "ai_enabled": False,
             "max_rounds": 2,
             "solvers": ["solver_a", "solver_b"],
         }
@@ -27,4 +27,13 @@ class RunResponse(BaseModel):
     budget_usd: Decimal | None
     actual_cost_usd: Decimal
     created_at: datetime
-    ai_notice: str = "Hội đồng Toán học AI (Bước 3 Multi-Agent)"
+    ai_notice: str = "Chưa chạy AI (Bước 2)"
+
+    @model_validator(mode="after")
+    def compute_ai_notice(self) -> "RunResponse":
+        cfg = self.config or {}
+        if cfg.get("ai_enabled") and cfg.get("mode") != "step2_skeleton":
+            self.ai_notice = "Hội đồng Toán học AI (Bước 3 Multi-Agent)"
+        else:
+            self.ai_notice = "Chưa chạy AI (Bước 2)"
+        return self
