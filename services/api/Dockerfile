@@ -3,8 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=8080
+    PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -17,6 +16,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-EXPOSE 8080 8000
+# Convert Windows line endings → Unix, then make executable
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
-CMD ["sh", "-c", "alembic upgrade head || echo 'Alembic migration deferred'; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+EXPOSE 8080
+
+# Railway injects $PORT at runtime. start.sh uses ${PORT:-8080}.
+CMD ["./start.sh"]
