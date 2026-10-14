@@ -158,7 +158,7 @@ export default function HomePage() {
           </div>
         ) : error ? (
           <div className="p-6 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-sm">
-            {error} (Vui lòng đảm bảo Backend API đang hoạt động tại cổng 8000)
+            {error}
           </div>
         ) : problems.length === 0 ? (
           <div className="text-center py-16 px-4 rounded-2xl bg-white border border-dashed border-slate-300">

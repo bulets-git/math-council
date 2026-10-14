@@ -47,7 +47,15 @@ export interface CreateRunInput {
 
 const getBaseUrl = (): string => {
   if (typeof window !== 'undefined') {
-    // Client-side: use relative URL, Next.js route handlers will proxy to backend
+    // In browser: if hosted on Railway or cloud (non-localhost), call FastAPI directly for speed & reliability
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      const publicUrl = process.env.NEXT_PUBLIC_API_URL;
+      if (publicUrl && !publicUrl.includes('api:8000') && !publicUrl.includes('localhost')) {
+        return publicUrl.replace(/\/+$/, '');
+      }
+      return 'https://api-production-881ea.up.railway.app';
+    }
+    // In local development, use relative URL (proxied by route handler)
     return '';
   }
   let url = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
