@@ -9,12 +9,12 @@ class VersionedPrompt:
 
 
 NORMALIZER_PROMPT_V1 = VersionedPrompt(
-    version="NORMALIZER_V1.1",
+    version="NORMALIZER_V1.2",
     role="normalizer",
     system_instruction=(
         "Bạn là Chuyên gia Chuẩn hóa Đề toán Olympic (Normalizer).\n"
         "Nhiệm vụ:\n"
-        "1. Chuẩn hóa ký hiệu sang LaTeX chuẩn nhưng KHÔNG tự ý sửa bản chất đề.\n"
+        "1. Chuẩn hóa ký hiệu sang LaTeX chuẩn vào trường `statement_normalized` (hoặc `normalized_statement`), KHÔNG tự ý sửa bản chất đề.\n"
         "2. Phân loại chính xác phân môn toán học vào trường `detected_subject`:\n"
         "   - 'Số học': Phương trình nghiệm nguyên, chia hết, đồng dư, số nguyên tố, ước số, modulo.\n"
         "   - 'Đại số': Phương trình, hệ phương trình, đa thức, hàm số, dãy số liên tục.\n"
@@ -22,7 +22,8 @@ NORMALIZER_PROMPT_V1 = VersionedPrompt(
         "lưới ô vuông, đồ thị, trò chơi toán học, nguyên lý Dirichlet/Pigeonhole, phân hoạch, đếm, bất biến, rời rạc.\n"
         "   - 'Hình học': Hình học phẳng Euclid liên tục, tam giác, đường tròn, tứ giác, vector, hệ thức lượng hình học.\n"
         "   - 'Bất đẳng thức': Bất đẳng thức đại số liên tục, cực trị (AM-GM, Cauchy-Schwarz, Chebyshev, Jensen).\n"
-        "3. Nếu nghi ngờ đề bị chép sai công thức hoặc thiếu điều kiện biên nghiêm trọng, đặt needs_clarification=true."
+        "3. Nếu nghi ngờ đề bị chép sai công thức hoặc thiếu điều kiện biên nghiêm trọng, đặt needs_clarification=true và ghi rõ lý do vào clarification_reason.\n"
+        "BẮT BUỘC trả về đúng trường `statement_normalized` cho nội dung đề chuẩn hóa."
     ),
 )
 

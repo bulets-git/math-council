@@ -1,5 +1,5 @@
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 # ==============================================================================
 # SCHEMA SET A (Math Council Master & Multi-LLM Contracts)
@@ -23,10 +23,35 @@ ConfidenceLevel = Literal["low", "medium", "high"]
 
 
 class NormalizationOutputSchema(BaseModel):
-    statement_normalized: str = Field(..., description="Đề toán đã chuẩn hóa LaTeX.")
-    needs_clarification: bool = Field(default=False)
-    clarification_reason: str | None = Field(default=None)
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    statement_normalized: str = Field(
+        ...,
+        validation_alias=AliasChoices("statement_normalized", "normalized_statement", "normalized_problem_statement"),
+        description="Đề toán đã chuẩn hóa LaTeX.",
+    )
+    needs_clarification: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("needs_clarification", "has_ambiguity", "is_ambiguous"),
+    )
+    clarification_reason: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("clarification_reason", "ambiguity_warning", "warning"),
+    )
     detected_subject: str | None = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def unify_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key in ["normalized_statement", "normalized_problem_statement", "normalized_problem", "statement"]:
+                if key in data and "statement_normalized" not in data:
+                    data["statement_normalized"] = data[key]
+            if "has_ambiguity" in data and "needs_clarification" not in data:
+                data["needs_clarification"] = data["has_ambiguity"]
+            if "ambiguity_warning" in data and "clarification_reason" not in data:
+                data["clarification_reason"] = data["ambiguity_warning"]
+        return data
 
 
 class SourceMetadataSchema(BaseModel):
@@ -126,11 +151,47 @@ class JudgeOutputSchema(BaseModel):
 # ==============================================================================
 
 class NormalizerOutput(BaseModel):
-    normalized_statement: str = Field(..., description="Đề toán sau khi chuẩn hóa ký hiệu LaTeX")
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    normalized_statement: str = Field(
+        ...,
+        validation_alias=AliasChoices(
+            "normalized_statement",
+            "normalized_problem_statement",
+            "statement_normalized",
+            "normalized_problem",
+        ),
+        description="Đề toán sau khi chuẩn hóa ký hiệu LaTeX",
+    )
     assumptions: list[str] = Field(default_factory=list, description="Các giả thiết ngầm định hoặc điều kiện xác định")
     extracted_variables: dict[str, str] = Field(default_factory=dict, description="Các biến số và miền giá trị")
-    has_ambiguity: bool = Field(default=False, description="Đề toán có mơ hồ hoặc thiếu dữ kiện nghiêm trọng không")
-    ambiguity_warning: str | None = Field(default=None, description="Cảnh báo chi tiết nếu phát hiện đề mơ hồ")
+    has_ambiguity: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("has_ambiguity", "needs_clarification", "is_ambiguous"),
+        description="Đề toán có mơ hồ hoặc thiếu dữ kiện nghiêm trọng không",
+    )
+    ambiguity_warning: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ambiguity_warning", "clarification_reason", "warning"),
+        description="Cảnh báo chi tiết nếu phát hiện đề mơ hồ",
+    )
+    detected_subject: str | None = Field(
+        default=None,
+        description="Phân môn toán học: Số học, Đại số, Tổ hợp / Toán rời rạc, Hình học, Bất đẳng thức",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def unify_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key in ["normalized_problem_statement", "statement_normalized", "normalized_problem", "statement"]:
+                if key in data and "normalized_statement" not in data:
+                    data["normalized_statement"] = data[key]
+            if "needs_clarification" in data and "has_ambiguity" not in data:
+                data["has_ambiguity"] = data["needs_clarification"]
+            if "clarification_reason" in data and "ambiguity_warning" not in data:
+                data["ambiguity_warning"] = data["clarification_reason"]
+        return data
 
 
 class ClaimItem(BaseModel):
