@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_API_KEY: str = ""
 
+    # Alibaba Cloud Model Studio (MaaS) API Provider
+    ALIBABA_BASE_URL: str = "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+    ALIBABA_API_KEY: str = ""
+
+    # DeepInfra API Provider
+    DEEPINFRA_BASE_URL: str = "https://api.deepinfra.com/v1/openai"
+    DEEPINFRA_API_KEY: str = ""
+
     # Cấu hình Model mặc định cho từng vai trò trong Hội đồng (provider:model_name)
     ROLE_NORMALIZER_MODEL: str = "gemini:gemini-2.5-flash"
     ROLE_SOURCE_FINDER_MODEL: str = "openai_compatible:google/gemini-2.5-flash:online"

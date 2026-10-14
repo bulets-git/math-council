@@ -204,11 +204,57 @@ class OpenAIAdapter(BaseLLMAdapter):
 class OpenAICompatibleAdapter(OpenAIAdapter):
     provider_name = "openai_compatible"
 
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
         super().__init__(
-            api_key=settings.OPENAI_COMPATIBLE_API_KEY,
-            base_url=settings.OPENAI_COMPATIBLE_BASE_URL,
+            api_key=api_key if api_key is not None else settings.OPENAI_COMPATIBLE_API_KEY,
+            base_url=base_url if base_url is not None else settings.OPENAI_COMPATIBLE_BASE_URL,
         )
+
+
+class AlibabaAdapter(OpenAICompatibleAdapter):
+    provider_name = "alibaba"
+
+    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
+        import os
+        key = (
+            api_key
+            if api_key is not None
+            else (os.getenv("ALIBABA_API_KEY") or getattr(settings, "ALIBABA_API_KEY", ""))
+        )
+        url = (
+            base_url
+            if base_url is not None
+            else (
+                os.getenv("ALIBABA_BASE_URL")
+                or getattr(
+                    settings,
+                    "ALIBABA_BASE_URL",
+                    "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+                )
+            )
+        )
+        super().__init__(api_key=key, base_url=url)
+
+
+class DeepInfraAdapter(OpenAICompatibleAdapter):
+    provider_name = "deepinfra"
+
+    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
+        import os
+        key = (
+            api_key
+            if api_key is not None
+            else (os.getenv("DEEPINFRA_API_KEY") or getattr(settings, "DEEPINFRA_API_KEY", ""))
+        )
+        url = (
+            base_url
+            if base_url is not None
+            else (
+                os.getenv("DEEPINFRA_BASE_URL")
+                or getattr(settings, "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai")
+            )
+        )
+        super().__init__(api_key=key, base_url=url)
 
 
 class AnthropicAdapter(BaseLLMAdapter):
@@ -577,6 +623,8 @@ class MultiProviderRouter:
             "anthropic": AnthropicAdapter(),
             "openai_compatible": OpenAICompatibleAdapter(),
             "deepseek": deepseek_adapter,
+            "alibaba": AlibabaAdapter(),
+            "deepinfra": DeepInfraAdapter(),
         }
 
     def resolve_spec(self, role_model_spec: str) -> tuple[BaseLLMAdapter, str]:
@@ -614,6 +662,42 @@ class MultiProviderRouter:
                 base_url=deepseek_base,
             )
             adapter.provider_name = "deepseek"
+            return adapter, model_name
+
+        # Hỗ trợ provider alibaba: (ví dụ alibaba:qwen-plus, alibaba:qwen-max)
+        if provider_key == "alibaba":
+            alibaba_base = os.getenv(
+                "ALIBABA_BASE_URL",
+                getattr(
+                    settings,
+                    "ALIBABA_BASE_URL",
+                    "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+                ),
+            ).rstrip("/")
+            alibaba_key = os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", ""))
+
+            if not alibaba_key and openrouter_key:
+                openrouter_model = model_name if "/" in model_name else f"qwen/{model_name}"
+                logger.info("MultiProviderRouter: Routing alibaba '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
+                return self.adapters["openai_compatible"], openrouter_model
+
+            adapter = AlibabaAdapter(api_key=alibaba_key, base_url=alibaba_base)
+            return adapter, model_name
+
+        # Hỗ trợ provider deepinfra: (ví dụ deepinfra:deepseek-ai/DeepSeek-V3)
+        if provider_key == "deepinfra":
+            deepinfra_base = os.getenv(
+                "DEEPINFRA_BASE_URL",
+                getattr(settings, "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
+            ).rstrip("/")
+            deepinfra_key = os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", ""))
+
+            if not deepinfra_key and openrouter_key:
+                openrouter_model = model_name
+                logger.info("MultiProviderRouter: Routing deepinfra '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
+                return self.adapters["openai_compatible"], openrouter_model
+
+            adapter = DeepInfraAdapter(api_key=deepinfra_key, base_url=deepinfra_base)
             return adapter, model_name
 
         # Fallback routing to OpenRouter when individual provider keys are absent
@@ -686,8 +770,42 @@ def get_available_models_catalog() -> list[dict[str, Any]]:
     deepseek_avail = bool(
         os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", "")) or openrouter_avail
     )
+    alibaba_avail = bool(
+        os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", "")) or openrouter_avail
+    )
+    deepinfra_avail = bool(
+        os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", "")) or openrouter_avail
+    )
 
     return [
+        {
+            "id": "alibaba:qwen-plus",
+            "provider": "alibaba",
+            "model_name": "qwen-plus",
+            "configured": alibaba_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c", "judge"],
+        },
+        {
+            "id": "alibaba:qwen-max",
+            "provider": "alibaba",
+            "model_name": "qwen-max",
+            "configured": alibaba_avail,
+            "recommended_roles": ["solver_a", "solver_b", "skeptic", "judge"],
+        },
+        {
+            "id": "deepinfra:deepseek-ai/DeepSeek-V3",
+            "provider": "deepinfra",
+            "model_name": "deepseek-ai/DeepSeek-V3",
+            "configured": deepinfra_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c"],
+        },
+        {
+            "id": "deepinfra:deepseek-ai/DeepSeek-R1",
+            "provider": "deepinfra",
+            "model_name": "deepseek-ai/DeepSeek-R1",
+            "configured": deepinfra_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c", "skeptic"],
+        },
         {
             "id": "deepseek:deepseek-reasoner",
             "provider": "deepseek",
