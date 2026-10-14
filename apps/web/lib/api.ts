@@ -135,6 +135,7 @@ export interface ModelInfo {
   provider: string;
   context_window: number;
   is_default: boolean;
+  configured?: boolean;
 }
 
 export interface Message {

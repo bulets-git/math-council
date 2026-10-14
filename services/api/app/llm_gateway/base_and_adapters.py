@@ -198,8 +198,12 @@ class AnthropicAdapter(BaseLLMAdapter):
         response_schema: type[T],
         timeout_sec: float = 90.0,
     ) -> tuple[T, LLMCallResult]:
-        if not settings.ANTHROPIC_API_KEY:
-            raise RuntimeError("Thiếu ANTHROPIC_API_KEY trong biến môi trường.")
+        api_key = settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                f"Chưa cấu hình ANTHROPIC_API_KEY cho model '{model_name}'. "
+                "Vui lòng thiết lập ANTHROPIC_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway Variables."
+            )
 
         full_system_prompt = build_schema_instruction(system_prompt, response_schema)
         payload = {
@@ -210,7 +214,7 @@ class AnthropicAdapter(BaseLLMAdapter):
             "messages": [{"role": "user", "content": user_prompt}],
         }
         headers = {
-            "x-api-key": settings.ANTHROPIC_API_KEY,
+            "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
@@ -257,8 +261,12 @@ class GeminiAdapter(BaseLLMAdapter):
         response_schema: type[T],
         timeout_sec: float = 90.0,
     ) -> tuple[T, LLMCallResult]:
-        if not settings.GEMINI_API_KEY:
-            raise RuntimeError("Thiếu GEMINI_API_KEY trong biến môi trường.")
+        api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                f"Chưa cấu hình GEMINI_API_KEY cho model '{model_name}'. "
+                "Vui lòng thiết lập GEMINI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway Variables."
+            )
 
         full_system_prompt = build_schema_instruction(system_prompt, response_schema)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
@@ -269,7 +277,7 @@ class GeminiAdapter(BaseLLMAdapter):
         }
         start = time.perf_counter()
         async with httpx.AsyncClient(timeout=timeout_sec) as client:
-            resp = await client.post(url, params={"key": settings.GEMINI_API_KEY}, json=payload)
+            resp = await client.post(url, params={"key": api_key}, json=payload)
             if resp.status_code >= 400:
                 logger.error("GeminiAdapter HTTP Error %d for model '%s': %s", resp.status_code, model_name, resp.text)
             resp.raise_for_status()
@@ -542,6 +550,27 @@ class MultiProviderRouter:
         else:
             provider_key, model_name = settings.DEFAULT_LLM_PROVIDER, role_model_spec
 
+        import os
+        openrouter_key = (
+            settings.OPENAI_COMPATIBLE_API_KEY
+            or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+            or os.getenv("OPENROUTER_API_KEY")
+        )
+
+        # Fallback routing to OpenRouter when individual provider keys are absent
+        if provider_key == "gemini" and not (settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")) and openrouter_key:
+            openrouter_model = model_name if model_name.startswith("google/") else f"google/{model_name}"
+            logger.info("MultiProviderRouter: Routing gemini '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
+            return self.adapters["openai_compatible"], openrouter_model
+        if provider_key == "openai" and not (settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")) and openrouter_key:
+            openrouter_model = model_name if model_name.startswith("openai/") else f"openai/{model_name}"
+            logger.info("MultiProviderRouter: Routing openai '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
+            return self.adapters["openai_compatible"], openrouter_model
+        if provider_key == "anthropic" and not (settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")) and openrouter_key:
+            openrouter_model = model_name if model_name.startswith("anthropic/") else f"anthropic/{model_name}"
+            logger.info("MultiProviderRouter: Routing anthropic '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
+            return self.adapters["openai_compatible"], openrouter_model
+
         adapter = self.adapters.get(provider_key)
         if not adapter:
             logger.error(
@@ -586,61 +615,71 @@ class MultiProviderRouter:
 
 
 def get_available_models_catalog() -> list[dict[str, Any]]:
+    import os
+    openrouter_avail = bool(
+        settings.OPENAI_COMPATIBLE_API_KEY
+        or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+    )
+    gemini_avail = bool(settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")) or openrouter_avail
+    openai_avail = bool(settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")) or openrouter_avail
+    anthropic_avail = bool(settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")) or openrouter_avail
+
     return [
         {
             "id": "gemini:gemini-2.5-pro",
             "provider": "gemini",
             "model_name": "gemini-2.5-pro",
-            "configured": bool(settings.GEMINI_API_KEY),
+            "configured": gemini_avail,
             "recommended_roles": ["solver_a", "solver_b", "judge"],
         },
         {
             "id": "openai:gpt-4o",
             "provider": "openai",
             "model_name": "gpt-4o",
-            "configured": bool(settings.OPENAI_API_KEY),
+            "configured": openai_avail,
             "recommended_roles": ["solver_a", "solver_b", "judge"],
         },
         {
             "id": "openai:o3-mini",
             "provider": "openai",
             "model_name": "o3-mini",
-            "configured": bool(settings.OPENAI_API_KEY),
+            "configured": openai_avail,
             "recommended_roles": ["solver_a", "solver_b", "skeptic"],
         },
         {
             "id": "openai_compatible:openai/o3-mini",
             "provider": "openai_compatible",
             "model_name": "openai/o3-mini",
-            "configured": bool(settings.OPENAI_COMPATIBLE_API_KEY),
+            "configured": openrouter_avail,
             "recommended_roles": ["solver_a", "solver_c", "skeptic"],
         },
         {
             "id": "openai_compatible:deepseek/deepseek-chat",
             "provider": "openai_compatible",
             "model_name": "deepseek/deepseek-chat",
-            "configured": bool(settings.OPENAI_COMPATIBLE_API_KEY),
+            "configured": openrouter_avail,
             "recommended_roles": ["solver_b", "solver_c"],
         },
         {
             "id": "anthropic:claude-3-7-sonnet-latest",
             "provider": "anthropic",
             "model_name": "claude-3-7-sonnet-latest",
-            "configured": bool(settings.ANTHROPIC_API_KEY),
+            "configured": anthropic_avail,
             "recommended_roles": ["skeptic", "solver_b", "judge"],
         },
         {
             "id": "openai_compatible:deepseek-reasoner",
             "provider": "openai_compatible",
             "model_name": "deepseek-reasoner",
-            "configured": bool(settings.OPENAI_COMPATIBLE_API_KEY),
+            "configured": openrouter_avail,
             "recommended_roles": ["solver_a", "solver_c", "skeptic"],
         },
         {
             "id": "openai_compatible:google/gemini-2.5-flash:online",
             "provider": "openai_compatible",
             "model_name": "google/gemini-2.5-flash:online",
-            "configured": bool(settings.OPENAI_COMPATIBLE_API_KEY),
+            "configured": openrouter_avail,
             "recommended_roles": ["source_finder"],
         },
         {

@@ -267,11 +267,27 @@ export default function ProblemDetailPage() {
                 key={run.id}
                 className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm hover:border-slate-300 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
               >
-                <div className="space-y-2">
+                <div className="space-y-2 flex-grow">
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Status Badge */}
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
-                      <span className="w-2 h-2 mr-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                      run.status === 'completed'
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                        : run.status === 'failed'
+                        ? 'bg-rose-100 text-rose-800 border-rose-200'
+                        : run.status === 'needs_review'
+                        ? 'bg-amber-100 text-amber-800 border-amber-200'
+                        : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                    }`}>
+                      <span className={`w-2 h-2 mr-1.5 rounded-full ${
+                        run.status === 'completed'
+                          ? 'bg-emerald-500'
+                          : run.status === 'failed'
+                          ? 'bg-rose-500'
+                          : run.status === 'needs_review'
+                          ? 'bg-amber-500'
+                          : 'bg-indigo-500 animate-pulse'
+                      }`}></span>
                       Trạng thái: {run.status}
                     </span>
 
@@ -288,6 +304,15 @@ export default function ProblemDetailPage() {
                       ID: {run.id}
                     </span>
                   </div>
+
+                  {run.status === 'failed' && (
+                    <div className="mt-1 text-xs text-rose-800 font-mono bg-rose-50 px-3 py-2 rounded-xl border border-rose-200 flex items-start gap-2">
+                      <span className="text-sm">⚠️</span>
+                      <div>
+                        <strong>Lỗi:</strong> {run.config?.error || 'Đã xảy ra lỗi khi thực thi AI. Kiểm tra API Key trên server.'}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="text-xs text-slate-500 flex flex-wrap gap-4">
                     <span>

@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any, Type
 import httpx
 from pydantic import BaseModel
+from app.core.config import settings
 from app.llm_gateway.base import BaseLLMAdapter, LLMResponse
 
 
@@ -12,8 +13,10 @@ class OpenAIAdapter(BaseLLMAdapter):
     """Adapter for OpenAI models (GPT-4o, etc.)."""
 
     def __init__(self, model_name: str = "gpt-4o", api_key: str | None = None, api_base: str | None = None):
-        super().__init__(model_name=model_name, api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.api_base = api_base or os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+        resolved_key = api_key or getattr(settings, "OPENAI_API_KEY", None) or os.getenv("OPENAI_API_KEY")
+        resolved_base = api_base or getattr(settings, "OPENAI_API_BASE", None) or os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+        super().__init__(model_name=model_name, api_key=resolved_key)
+        self.api_base = resolved_base
 
     async def generate(
         self,
@@ -23,7 +26,10 @@ class OpenAIAdapter(BaseLLMAdapter):
         **kwargs: Any,
     ) -> LLMResponse:
         if not self.api_key:
-            raise ValueError(f"API key is not configured for {self.model_name} (base: {self.api_base}).")
+            raise ValueError(
+                f"Chưa cấu hình API Key cho model '{self.model_name}' (Endpoint: {self.api_base}). "
+                "Vui lòng thiết lập OPENAI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway Variables."
+            )
 
         start_time = time.perf_counter()
         headers = {

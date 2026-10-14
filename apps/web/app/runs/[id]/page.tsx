@@ -291,10 +291,32 @@ export default function RunDetailPage() {
           </div>
         )}
 
-        {run.status === 'cancelled' && (
-          <div className="mb-5 p-4 rounded-xl bg-slate-100 border border-slate-300 text-slate-700 text-xs flex items-center gap-2">
-            <span className="text-xl">🚫</span>
-            <div>Phiên giải toán đã bị người dùng hủy bỏ trước khi hoàn tất.</div>
+        {run.status === 'failed' && (
+          <div className="mb-5 p-5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 text-xs shadow-sm">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl flex-shrink-0">❌</span>
+              <div className="space-y-2 flex-grow">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <strong className="text-sm font-bold text-rose-900">
+                    Phiên giải toán thất bại (Failed) {run.config?.failure_stage ? `tại bước: ${run.config.failure_stage}` : ''}
+                  </strong>
+                  <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-rose-100 text-rose-800 border border-rose-200">
+                    Mode: {run.config?.mode || 'live'}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-white/90 border border-rose-200 text-rose-800 font-mono text-xs whitespace-pre-wrap break-words leading-relaxed">
+                  {run.config?.error || 'Đã xảy ra lỗi trong quá trình thực thi AI. Vui lòng kiểm tra API Key hoặc Worker logs trên server.'}
+                </div>
+                <div className="text-[11px] text-rose-700 bg-rose-100/60 p-2.5 rounded-xl border border-rose-200/60">
+                  💡 <strong>Cách xử lý:</strong> Nếu lỗi do thiếu API Key, truy cập <strong>Railway Dashboard</strong> &rarr; chọn service <strong>api</strong> &rarr; tab <strong>Variables</strong> và thêm ít nhất một khóa:
+                  <ul className="list-disc list-inside mt-1 space-y-0.5 font-mono text-[10px]">
+                    <li><code>OPENAI_COMPATIBLE_API_KEY</code>: Khóa OpenRouter (hỗ trợ tất cả mô hình Gemini, Claude, OpenAI)</li>
+                    <li><code>GEMINI_API_KEY</code>: Khóa Google AI Studio (cho Normalizer &amp; Solver A)</li>
+                    <li><code>OPENAI_API_KEY</code>: Khóa OpenAI (cho Solver B &amp; Judge)</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

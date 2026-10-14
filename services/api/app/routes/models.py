@@ -15,6 +15,7 @@ async def list_models() -> list[ModelInfoResponse]:
             provider="mock",
             context_window=128000,
             is_default=True,
+            configured=True,
         )
     ]
     for item in catalog:
@@ -25,6 +26,7 @@ async def list_models() -> list[ModelInfoResponse]:
                 provider=item["provider"],
                 context_window=1000000 if "pro" in item["model_name"] or "sonnet" in item["model_name"] else 128000,
                 is_default=(item["id"] == "mock:deterministic-olympiad-v1"),
+                configured=item.get("configured", False),
             )
         )
     return models

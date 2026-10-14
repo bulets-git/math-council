@@ -11,6 +11,7 @@ class ModelInfoResponse(BaseModel):
     provider: str
     context_window: int = 128000
     is_default: bool = False
+    configured: bool = False
 
 
 class MessageResponse(BaseModel):

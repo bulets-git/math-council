@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Any, Type
 import httpx
 from pydantic import BaseModel
+from app.core.config import settings
 from app.llm_gateway.base import BaseLLMAdapter, LLMResponse
 
 
@@ -12,7 +13,8 @@ class GeminiAdapter(BaseLLMAdapter):
     """Adapter for Google Gemini models (gemini-1.5-pro, etc.)."""
 
     def __init__(self, model_name: str = "gemini-1.5-pro", api_key: str | None = None):
-        super().__init__(model_name=model_name, api_key=api_key or os.getenv("GEMINI_API_KEY"))
+        resolved_key = api_key or getattr(settings, "GEMINI_API_KEY", None) or os.getenv("GEMINI_API_KEY")
+        super().__init__(model_name=model_name, api_key=resolved_key)
         self.api_base = "https://generativelanguage.googleapis.com/v1beta"
 
     async def generate(
@@ -23,7 +25,10 @@ class GeminiAdapter(BaseLLMAdapter):
         **kwargs: Any,
     ) -> LLMResponse:
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY is not configured.")
+            raise ValueError(
+                "GEMINI_API_KEY chưa được cấu hình. "
+                "Vui lòng thiết lập GEMINI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway Variables."
+            )
 
         start_time = time.perf_counter()
         url = f"{self.api_base}/models/{self.model_name}:generateContent?key={self.api_key}"

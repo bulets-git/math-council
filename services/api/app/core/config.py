@@ -29,8 +29,25 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    OPENAI_COMPATIBLE_BASE_URL: str = "https://api.deepseek.com/v1"
+    OPENAI_COMPATIBLE_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENAI_COMPATIBLE_API_KEY: str = ""
+
+    @field_validator("OPENAI_COMPATIBLE_API_KEY", mode="before")
+    @classmethod
+    def assemble_openai_compatible_key(cls, v: str | None) -> str:
+        import os
+        if v:
+            return v
+        return os.getenv("OPENROUTER_API_KEY", "") or ""
+
+    @field_validator("OPENAI_COMPATIBLE_BASE_URL", mode="before")
+    @classmethod
+    def assemble_openai_compatible_base_url(cls, v: str | None) -> str:
+        import os
+        key = os.getenv("OPENAI_COMPATIBLE_API_KEY", "") or os.getenv("OPENROUTER_API_KEY", "")
+        if key.startswith("sk-or-") or os.getenv("OPENROUTER_API_KEY"):
+            return "https://openrouter.ai/api/v1"
+        return v or "https://openrouter.ai/api/v1"
 
     # Cấu hình Model mặc định cho từng vai trò trong Hội đồng (provider:model_name)
     ROLE_NORMALIZER_MODEL: str = "gemini:gemini-2.5-flash"

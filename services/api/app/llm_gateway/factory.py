@@ -1,3 +1,4 @@
+import os
 import logging
 from app.core.config import settings
 from app.llm_gateway.base import BaseLLMAdapter
@@ -10,30 +11,108 @@ logger = logging.getLogger("llm_gateway.factory")
 
 def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
     """Returns the appropriate LLM adapter based on the requested model name.
-    Strictly forbids silent fallback to DeterministicMockAdapter when DEFAULT_LLM_PROVIDER == 'live'.
+    Strictly forbids silent fallback to DeterministicMockAdapter when DEFAULT_LLM_PROVIDER == 'live' or mode == 'live'.
+    Supports routing models through OpenRouter (OPENAI_COMPATIBLE) if individual provider keys are missing.
     """
     name = model_name.lower()
+    openrouter_key = (
+        settings.OPENAI_COMPATIBLE_API_KEY
+        or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+    )
+    openrouter_base = settings.OPENAI_COMPATIBLE_BASE_URL or "https://openrouter.ai/api/v1"
+
     if name.startswith("mock") or model_name == "mock-math-council":
         return DeterministicMockAdapter(model_name=model_name)
+
     elif name.startswith("openai_compatible:") or name.startswith("openrouter:") or "openai_compatible" in name:
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
+        if not openrouter_key:
+            if settings.DEFAULT_LLM_PROVIDER == "mock":
+                return DeterministicMockAdapter(model_name=model_name)
+            raise ValueError(
+                "Chưa cấu hình OPENAI_COMPATIBLE_API_KEY hoặc OPENROUTER_API_KEY trên Railway Variables."
+            )
         return OpenAIAdapter(
             model_name=actual_model,
-            api_key=settings.OPENAI_COMPATIBLE_API_KEY,
-            api_base=settings.OPENAI_COMPATIBLE_BASE_URL,
+            api_key=openrouter_key,
+            api_base=openrouter_base,
         )
-    elif name.startswith("gpt") or name.startswith("o1") or name.startswith("o3") or "openai" in name:
-        actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
-        return OpenAIAdapter(model_name=actual_model)
+
     elif name.startswith("gemini") or "google" in name:
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
-        return GeminiAdapter(model_name=actual_model)
-    elif name.startswith("claude") or "anthropic" in name:
-        from app.llm_gateway.base_and_adapters import AnthropicAdapter
+        gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            return GeminiAdapter(model_name=actual_model, api_key=gemini_key)
+        
+        # Transparent routing through OpenRouter if available
+        if openrouter_key:
+            openrouter_model = actual_model if actual_model.startswith("google/") else f"google/{actual_model}"
+            logger.info("Routing Gemini model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
+            return OpenAIAdapter(
+                model_name=openrouter_model,
+                api_key=openrouter_key,
+                api_base=openrouter_base,
+            )
+
+        if settings.DEFAULT_LLM_PROVIDER == "mock":
+            return DeterministicMockAdapter(model_name=model_name)
+
+        raise ValueError(
+            f"Chưa cấu hình API Key cho Gemini ('{model_name}'). "
+            "Vui lòng thiết lập biến môi trường GEMINI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+        )
+
+    elif name.startswith("gpt") or name.startswith("o1") or name.startswith("o3") or "openai" in name:
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
-        return AnthropicAdapter()
+        openai_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            return OpenAIAdapter(model_name=actual_model, api_key=openai_key)
+
+        if openrouter_key:
+            openrouter_model = actual_model if actual_model.startswith("openai/") else f"openai/{actual_model}"
+            logger.info("Routing OpenAI model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
+            return OpenAIAdapter(
+                model_name=openrouter_model,
+                api_key=openrouter_key,
+                api_base=openrouter_base,
+            )
+
+        if settings.DEFAULT_LLM_PROVIDER == "mock":
+            return DeterministicMockAdapter(model_name=model_name)
+
+        raise ValueError(
+            f"Chưa cấu hình API Key cho OpenAI ('{model_name}'). "
+            "Vui lòng thiết lập biến môi trường OPENAI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+        )
+
+    elif name.startswith("claude") or "anthropic" in name:
+        actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
+        anthropic_key = settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            from app.llm_gateway.base_and_adapters import AnthropicAdapter
+            return AnthropicAdapter()
+
+        if openrouter_key:
+            openrouter_model = actual_model if actual_model.startswith("anthropic/") else f"anthropic/{actual_model}"
+            logger.info("Routing Anthropic Claude model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
+            return OpenAIAdapter(
+                model_name=openrouter_model,
+                api_key=openrouter_key,
+                api_base=openrouter_base,
+            )
+
+        if settings.DEFAULT_LLM_PROVIDER == "mock":
+            return DeterministicMockAdapter(model_name=model_name)
+
+        raise ValueError(
+            f"Chưa cấu hình API Key cho Anthropic Claude ('{model_name}'). "
+            "Vui lòng thiết lập biến môi trường ANTHROPIC_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+        )
+
     elif settings.DEFAULT_LLM_PROVIDER == "mock":
         return DeterministicMockAdapter(model_name=model_name)
+
     else:
         logger.error(
             "CRITICAL: get_llm_adapter cannot resolve model '%s' while DEFAULT_LLM_PROVIDER is '%s'. "

@@ -56,8 +56,20 @@ class CouncilOrchestrator:
         if run.status != "needs_review":
             raise ValueError(f"Run {run_id} is in status '{run.status}', only 'needs_review' can be resumed.")
         
-        # Resume directly into solving phase
-        return await self._execute_from_solving(db, run)
+        try:
+            return await self._execute_from_solving(db, run)
+        except Exception as err:
+            logger.exception("Unexpected error in resume_run for run %s: %s", run_id, err)
+            run = await db.get(Run, run_id)
+            if run:
+                run.status = "failed"
+                run_cfg = dict(run.config or {})
+                run_cfg["error"] = str(err)
+                run_cfg["failure_stage"] = "solving"
+                run.config = run_cfg
+                await db.commit()
+            await event_publisher.publish(run_id, "run_failed", {"error": str(err)})
+            return "failed"
 
     async def run_pipeline(self, db: AsyncSession, run_id: uuid.UUID) -> str:
         """Executes full Council pipeline:
@@ -174,13 +186,26 @@ class CouncilOrchestrator:
 
         except BudgetExhaustedError as b_err:
             logger.warning("Budget exhausted during run %s: %s", run_id, b_err)
+            run = await db.get(Run, run_id)
+            if run:
+                run.status = "budget_exhausted"
+                run_cfg = dict(run.config or {})
+                run_cfg["error"] = str(b_err)
+                run_cfg["failure_stage"] = "budget_exhausted"
+                run.config = run_cfg
+                await db.commit()
             await event_publisher.publish(run_id, "budget_exhausted", {"error": str(b_err)})
             return "budget_exhausted"
         except Exception as err:
             logger.exception("Unexpected error in run_pipeline for run %s: %s", run_id, err)
             run = await db.get(Run, run_id)
             if run:
+                prev_stage = run.status or "normalizing"
                 run.status = "failed"
+                run_cfg = dict(run.config or {})
+                run_cfg["error"] = str(err)
+                run_cfg["failure_stage"] = prev_stage
+                run.config = run_cfg
                 await db.commit()
             await event_publisher.publish(run_id, "run_failed", {"error": str(err)})
             return "failed"
@@ -323,26 +348,51 @@ class CouncilOrchestrator:
         await db.commit()
         await event_publisher.publish(run_id, "status_changed", {"status": "solving"})
 
-        # Reserve budget atomically for both Solvers
+        # Reserve budget atomically for Solvers
+        has_solver_c = "solver_c" in (run.config or {}).get("solvers", [])
         reserved_a = await budget_manager.check_and_reserve(db, run_id, Decimal("0.010000"))
         reserved_b = await budget_manager.check_and_reserve(db, run_id, Decimal("0.010000"))
+        if has_solver_c:
+            adapter_c = get_llm_adapter(settings.ROLE_SOLVER_C_MODEL if is_live else "mock-math-council")
+            reserved_c = await budget_manager.check_and_reserve(db, run_id, Decimal("0.010000"))
 
         prompt_a = f"Giải bài toán sau:\n{normalized_statement}{source_ref}"
         prompt_b = f"Giải bài toán sau với góc nhìn độc lập:\n{normalized_statement}{source_ref}"
+        if has_solver_c:
+            prompt_c = f"Giải bài toán sau với phương pháp phân tích độc lập:\n{normalized_statement}{source_ref}"
 
         # Parallel LLM generation
-        res_a, res_b = await asyncio.gather(
-            adapter_a.generate(
-                system_prompt=SOLVER_SYSTEM_PROMPT,
-                user_prompt=prompt_a,
-                response_schema=SolverOutput,
-            ),
-            adapter_b.generate(
-                system_prompt=SOLVER_SYSTEM_PROMPT,
-                user_prompt=prompt_b,
-                response_schema=SolverOutput,
-            ),
-        )
+        if has_solver_c:
+            res_a, res_b, res_c = await asyncio.gather(
+                adapter_a.generate(
+                    system_prompt=SOLVER_SYSTEM_PROMPT,
+                    user_prompt=prompt_a,
+                    response_schema=SolverOutput,
+                ),
+                adapter_b.generate(
+                    system_prompt=SOLVER_SYSTEM_PROMPT,
+                    user_prompt=prompt_b,
+                    response_schema=SolverOutput,
+                ),
+                adapter_c.generate(
+                    system_prompt=SOLVER_SYSTEM_PROMPT,
+                    user_prompt=prompt_c,
+                    response_schema=SolverOutput,
+                ),
+            )
+        else:
+            res_a, res_b = await asyncio.gather(
+                adapter_a.generate(
+                    system_prompt=SOLVER_SYSTEM_PROMPT,
+                    user_prompt=prompt_a,
+                    response_schema=SolverOutput,
+                ),
+                adapter_b.generate(
+                    system_prompt=SOLVER_SYSTEM_PROMPT,
+                    user_prompt=prompt_b,
+                    response_schema=SolverOutput,
+                ),
+            )
 
         # Sequential DB recording (avoids concurrent AsyncSession access)
         await budget_manager.record_call_and_release(
@@ -370,6 +420,20 @@ class CouncilOrchestrator:
             prompt_version=PROMPT_VERSION,
             reserved_cost=reserved_b,
         )
+
+        if has_solver_c:
+            await budget_manager.record_call_and_release(
+                db=db,
+                run_id=run_id,
+                agent_role="solver_c",
+                model_name=adapter_c.model_name,
+                prompt_tokens=res_c.prompt_tokens,
+                completion_tokens=res_c.completion_tokens,
+                actual_cost=res_c.cost_usd,
+                latency_ms=res_c.latency_ms,
+                prompt_version=PROMPT_VERSION,
+                reserved_cost=reserved_c,
+            )
 
         solver_a_out = SolverOutput.model_validate(res_a.parsed_json)
         solver_b_out = SolverOutput.model_validate(res_b.parsed_json)
@@ -400,12 +464,27 @@ class CouncilOrchestrator:
             claims_items=solver_b_out.claims,
         )
 
+        if has_solver_c:
+            solver_c_out = SolverOutput.model_validate(res_c.parsed_json)
+            validate_claim_dag(solver_c_out.claims)
+            sol_c = await discussion_engine.save_solution_with_claims(
+                db=db,
+                run_id=run_id,
+                solver_role="solver_c",
+                version=1,
+                round_number=1,
+                summary=solver_c_out.summary,
+                final_answer=solver_c_out.final_answer,
+                claims_items=solver_c_out.claims,
+            )
+
+        solvers_list = ["solver_a", "solver_b", "solver_c"] if has_solver_c else ["solver_a", "solver_b"]
         await event_publisher.publish(
-            run_id, "solutions_generated", {"solvers": ["solver_a", "solver_b"]}
+            run_id, "solutions_generated", {"solvers": solvers_list}
         )
 
         # ---------------------------------------------------------
-        # 3. CRITIQUING PHASE (Skeptic challenges Solver A & B)
+        # 3. CRITIQUING PHASE (Skeptic challenges Solver A & B & C)
         # ---------------------------------------------------------
         run.status = "critiquing"
         await db.commit()
@@ -417,6 +496,8 @@ class CouncilOrchestrator:
             f"Solver A: {solver_a_out.summary}\nĐáp số: {solver_a_out.final_answer}\n\n"
             f"Solver B: {solver_b_out.summary}\nĐáp số: {solver_b_out.final_answer}"
         )
+        if has_solver_c:
+            skeptic_prompt += f"\n\nSolver C: {solver_c_out.summary}\nĐáp số: {solver_c_out.final_answer}"
         sk_res = await adapter_sk.generate(
             system_prompt=SKEPTIC_SYSTEM_PROMPT,
             user_prompt=skeptic_prompt,
