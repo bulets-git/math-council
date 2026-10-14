@@ -19,8 +19,14 @@ async function forwardRequest(request: NextRequest, { params }: { params: { path
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {
-    // Exclude host and content-length to avoid proxy conflicts
-    if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'content-length') {
+    // Strip headers that interfere with upstream fetch
+    const lower = key.toLowerCase();
+    if (
+      lower !== 'host' &&
+      lower !== 'content-length' &&
+      lower !== 'accept-encoding' &&
+      lower !== 'connection'
+    ) {
       headers.set(key, value);
     }
   });
@@ -38,9 +44,29 @@ async function forwardRequest(request: NextRequest, { params }: { params: { path
       cache: 'no-store',
     });
 
+    const contentType = backendResponse.headers.get('content-type') || '';
+
+    // For JSON responses, decode and use NextResponse.json to ensure correct compression & Content-Length
+    if (contentType.includes('application/json')) {
+      const data = await backendResponse.json();
+      return NextResponse.json(data, {
+        status: backendResponse.status,
+        statusText: backendResponse.statusText,
+      });
+    }
+
+    // For streaming responses (e.g. SSE text/event-stream) or others, stream body while stripping mismatching encoding headers
     const responseHeaders = new Headers();
     backendResponse.headers.forEach((value, key) => {
-      responseHeaders.set(key, value);
+      const lower = key.toLowerCase();
+      if (
+        lower !== 'content-encoding' &&
+        lower !== 'content-length' &&
+        lower !== 'transfer-encoding' &&
+        lower !== 'connection'
+      ) {
+        responseHeaders.set(key, value);
+      }
     });
 
     return new Response(backendResponse.body, {
