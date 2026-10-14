@@ -1,19 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  async rewrites() {
-    const internalApiUrl = process.env.INTERNAL_API_URL || 'http://api:8000';
-    return [
-      {
-        source: '/api/v1/:path*',
-        destination: `${internalApiUrl}/api/v1/:path*`,
-      },
-      {
-        source: '/health',
-        destination: `${internalApiUrl}/health`,
-      },
-    ];
-  },
+  // We use Next.js Route Handlers in app/api/v1/[...path]/route.ts and app/health/route.ts
+  // to dynamically proxy requests at runtime, reading INTERNAL_API_URL or NEXT_PUBLIC_API_URL.
 };
 
 export default nextConfig;

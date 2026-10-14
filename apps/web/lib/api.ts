@@ -47,11 +47,15 @@ export interface CreateRunInput {
 
 const getBaseUrl = (): string => {
   if (typeof window !== 'undefined') {
-    // Client-side: use relative URL, Next.js rewrites will proxy to backend
+    // Client-side: use relative URL, Next.js route handlers will proxy to backend
     return '';
   }
-  // Server-side (SSR / Server Component): use internal API URL
-  return process.env.INTERNAL_API_URL || 'http://localhost:8000';
+  // Server-side (SSR / Server Component): use internal API URL or fallback to production API
+  return (
+    process.env.INTERNAL_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    'https://api-production-881ea.up.railway.app'
+  );
 };
 
 async function handleResponse<T>(res: Response): Promise<T> {

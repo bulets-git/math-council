@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 function getBackendBaseUrl(): string {
-  const url = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const url =
+    process.env.INTERNAL_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    'https://api-production-881ea.up.railway.app';
   return url.replace(/\/+$/, '');
 }
 
@@ -46,7 +49,7 @@ async function forwardRequest(request: NextRequest, { params }: { params: { path
     });
   } catch (error: any) {
     return NextResponse.json(
-      { detail: `Failed to proxy request to backend: ${error?.message || error}` },
+      { detail: `Failed to proxy request to backend (${targetUrl}): ${error?.message || error}` },
       { status: 502 }
     );
   }
