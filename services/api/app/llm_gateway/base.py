@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class LLMResponse(BaseModel):
     content: str
     parsed_json: dict[str, Any] | None = None
+    reasoning_content: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0

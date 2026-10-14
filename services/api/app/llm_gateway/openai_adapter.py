@@ -49,7 +49,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         if not any(k in self.model_name.lower() for k in ["o1", "o3", "reasoner"]):
             payload["temperature"] = kwargs.get("temperature", 0.2)
 
-        if response_schema:
+        if response_schema and not any(k in self.model_name.lower() for k in ["reasoner"]):
             payload["response_format"] = {"type": "json_object"}
 
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -67,14 +67,45 @@ class OpenAIAdapter(BaseLLMAdapter):
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         choice = data["choices"][0]["message"]
-        content = choice["content"]
+        content = choice.get("content") or ""
+        reasoning_content = choice.get("reasoning_content") or ""
+
+        # Extract reasoning from <think>...</think> if not in reasoning_content
+        import re
+        if not reasoning_content and "<think>" in content:
+            think_match = re.search(r"<think>(.*?)</think>", content, flags=re.DOTALL)
+            if think_match:
+                reasoning_content = think_match.group(1).strip()
 
         parsed = None
         if response_schema or kwargs.get("parse_json", True):
             try:
-                parsed = json.loads(content)
+                cleaned = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL)
+                if fence_match:
+                    json_str = fence_match.group(1)
+                else:
+                    first_brace = cleaned.find("{")
+                    last_brace = cleaned.rfind("}")
+                    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                        json_str = cleaned[first_brace : last_brace + 1]
+                    else:
+                        json_str = cleaned
+                parsed = json.loads(json_str)
             except Exception:
-                pass
+                try:
+                    parsed = json.loads(content)
+                except Exception:
+                    pass
+
+        # Bóc tách reasoning tokens / thinking content vào lời giải
+        if reasoning_content and isinstance(parsed, dict):
+            parsed["reasoning_content"] = reasoning_content
+            if "summary" in parsed and "Tư duy suy luận" not in str(parsed["summary"]):
+                parsed["summary"] = (
+                    f"**[Tư duy suy luận (DeepSeek Reasoner)]**:\n{reasoning_content}\n\n"
+                    f"**[Tóm tắt phương pháp]**:\n{parsed['summary']}"
+                )
 
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
@@ -87,6 +118,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         return LLMResponse(
             content=content,
             parsed_json=parsed,
+            reasoning_content=reasoning_content or None,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,

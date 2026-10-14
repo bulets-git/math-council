@@ -49,11 +49,30 @@ class Settings(BaseSettings):
             return "https://openrouter.ai/api/v1"
         return v or "https://openrouter.ai/api/v1"
 
+    # DeepSeek API Provider
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_API_KEY: str = ""
+
     # Cấu hình Model mặc định cho từng vai trò trong Hội đồng (provider:model_name)
     ROLE_NORMALIZER_MODEL: str = "gemini:gemini-2.5-flash"
     ROLE_SOURCE_FINDER_MODEL: str = "openai_compatible:google/gemini-2.5-flash:online"
     ROLE_SOLVER_A_MODEL: str = "gemini:gemini-2.5-pro"
     ROLE_SOLVER_B_MODEL: str = "openai:gpt-4o"
+
+    @field_validator("ROLE_SOLVER_B_MODEL", mode="before")
+    @classmethod
+    def assemble_solver_b_model(cls, v: str | None) -> str:
+        import os
+        env_val = os.getenv("ROLE_SOLVER_B_MODEL")
+        if env_val:
+            return env_val
+        if v and v != "openai:gpt-4o":
+            return v
+        # Mặc định đọc từ deepseek:deepseek-reasoner nếu DEEPSEEK_API_KEY được cấu hình
+        if os.getenv("DEEPSEEK_API_KEY"):
+            return "deepseek:deepseek-reasoner"
+        return v or "openai:gpt-4o"
+
     ROLE_SOLVER_C_MODEL: str = "openai_compatible:openai/o3-mini"
     ROLE_SKEPTIC_MODEL: str = "anthropic:claude-3-7-sonnet-latest"
     ROLE_JUDGE_MODEL: str = "openai:gpt-4o"

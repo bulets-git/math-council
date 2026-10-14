@@ -39,6 +39,36 @@ def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
             api_base=openrouter_base,
         )
 
+    elif name.startswith("deepseek:") or name.startswith("deepseek"):
+        actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
+        deepseek_base = os.getenv(
+            "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        ).rstrip("/")
+        if deepseek_key:
+            return OpenAIAdapter(
+                model_name=actual_model,
+                api_key=deepseek_key,
+                api_base=deepseek_base,
+            )
+
+        if openrouter_key:
+            openrouter_model = actual_model if actual_model.startswith("deepseek/") else f"deepseek/{actual_model}"
+            logger.info("Routing DeepSeek model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
+            return OpenAIAdapter(
+                model_name=openrouter_model,
+                api_key=openrouter_key,
+                api_base=openrouter_base,
+            )
+
+        if settings.DEFAULT_LLM_PROVIDER == "mock":
+            return DeterministicMockAdapter(model_name=model_name)
+
+        raise ValueError(
+            f"Chưa cấu hình API Key cho DeepSeek ('{model_name}'). "
+            "Vui lòng thiết lập biến môi trường DEEPSEEK_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+        )
+
     elif name.startswith("gemini") or "google" in name:
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
         gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")

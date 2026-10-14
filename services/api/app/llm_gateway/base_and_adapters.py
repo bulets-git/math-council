@@ -80,6 +80,7 @@ class LLMCallResult(BaseModel):
     cost_usd: Decimal
     latency_ms: int
     provider_request_id: str | None = None
+    reasoning_content: str | None = None
 
 
 class BaseLLMAdapter(abc.ABC):
@@ -127,9 +128,12 @@ class OpenAIAdapter(BaseLLMAdapter):
                 {"role": "system", "content": full_system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "response_format": {"type": "json_object"},
         }
-        # Reasoning models (o1, o3, o3-mini) do not accept custom temperature in OpenAI/OpenRouter APIs
+        # deepseek-reasoner does not support response_format json_object
+        if not any(k in model_name.lower() for k in ["reasoner", "o1"]):
+            payload["response_format"] = {"type": "json_object"}
+
+        # Reasoning models (o1, o3, o3-mini, deepseek-reasoner) do not accept custom temperature in OpenAI/DeepSeek APIs
         if not any(k in model_name.lower() for k in ["o1", "o3", "reasoner"]):
             payload["temperature"] = 0.2
 
@@ -155,8 +159,29 @@ class OpenAIAdapter(BaseLLMAdapter):
             data = resp.json()
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
-        raw_content = data["choices"][0]["message"]["content"]
-        validated = response_schema.model_validate_json(extract_json_object(raw_content))
+        choice = data["choices"][0]["message"]
+        raw_content = choice.get("content") or ""
+        reasoning_content = choice.get("reasoning_content") or ""
+
+        # Extract reasoning from <think>...</think> if not in reasoning_content field
+        if not reasoning_content and "<think>" in raw_content:
+            think_match = re.search(r"<think>(.*?)</think>", raw_content, flags=re.DOTALL)
+            if think_match:
+                reasoning_content = think_match.group(1).strip()
+
+        json_str = extract_json_object(raw_content)
+        parsed_dict = json.loads(json_str)
+
+        # Bóc tách reasoning tokens / thinking content vào lời giải
+        if reasoning_content and isinstance(parsed_dict, dict):
+            parsed_dict["reasoning_content"] = reasoning_content
+            if "summary" in parsed_dict and "Tư duy suy luận" not in str(parsed_dict["summary"]):
+                parsed_dict["summary"] = (
+                    f"**[Tư duy suy luận (DeepSeek Reasoner)]**:\n{reasoning_content}\n\n"
+                    f"**[Tóm tắt phương pháp]**:\n{parsed_dict['summary']}"
+                )
+
+        validated = response_schema.model_validate(parsed_dict)
 
         usage = data.get("usage", {})
         in_tok = int(usage.get("prompt_tokens", 0))
@@ -172,6 +197,7 @@ class OpenAIAdapter(BaseLLMAdapter):
             cost_usd=calculate_call_cost(model_name, in_tok, out_tok),
             latency_ms=elapsed_ms,
             provider_request_id=data.get("id"),
+            reasoning_content=reasoning_content or None,
         )
 
 
@@ -530,14 +556,27 @@ class DeterministicMockAdapter(BaseLLMAdapter):
 
 
 class MultiProviderRouter:
-    def __init__(self, force_mock: bool = False) -> None:
-        self.force_mock = force_mock or (settings.DEFAULT_LLM_PROVIDER == "mock")
+    def __init__(self, force_mock: bool | None = None) -> None:
+        import os
+        deepseek_base = os.getenv(
+            "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        ).rstrip("/")
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
+
+        if force_mock is not None:
+            self.force_mock = force_mock
+        else:
+            self.force_mock = (settings.DEFAULT_LLM_PROVIDER == "mock")
+        deepseek_adapter = OpenAIAdapter(api_key=deepseek_key, base_url=deepseek_base)
+        deepseek_adapter.provider_name = "deepseek"
+
         self.adapters: dict[str, BaseLLMAdapter] = {
             "mock": DeterministicMockAdapter(),
             "gemini": GeminiAdapter(),
             "openai": OpenAIAdapter(),
             "anthropic": AnthropicAdapter(),
             "openai_compatible": OpenAICompatibleAdapter(),
+            "deepseek": deepseek_adapter,
         }
 
     def resolve_spec(self, role_model_spec: str) -> tuple[BaseLLMAdapter, str]:
@@ -556,6 +595,26 @@ class MultiProviderRouter:
             or os.getenv("OPENAI_COMPATIBLE_API_KEY")
             or os.getenv("OPENROUTER_API_KEY")
         )
+
+        # Hỗ trợ provider deepseek: (ví dụ deepseek:deepseek-reasoner)
+        if provider_key == "deepseek":
+            deepseek_base = os.getenv(
+                "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+            ).rstrip("/")
+            deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
+
+            # Nếu chưa có DEEPSEEK_API_KEY nhưng có khóa OpenRouter, tự động định tuyến qua OpenRouter
+            if not deepseek_key and openrouter_key:
+                openrouter_model = model_name if model_name.startswith("deepseek/") else f"deepseek/{model_name}"
+                logger.info("MultiProviderRouter: Routing deepseek '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
+                return self.adapters["openai_compatible"], openrouter_model
+
+            adapter = OpenAIAdapter(
+                api_key=deepseek_key,
+                base_url=deepseek_base,
+            )
+            adapter.provider_name = "deepseek"
+            return adapter, model_name
 
         # Fallback routing to OpenRouter when individual provider keys are absent
         if provider_key == "gemini" and not (settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")) and openrouter_key:
@@ -624,8 +683,25 @@ def get_available_models_catalog() -> list[dict[str, Any]]:
     gemini_avail = bool(settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")) or openrouter_avail
     openai_avail = bool(settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")) or openrouter_avail
     anthropic_avail = bool(settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")) or openrouter_avail
+    deepseek_avail = bool(
+        os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", "")) or openrouter_avail
+    )
 
     return [
+        {
+            "id": "deepseek:deepseek-reasoner",
+            "provider": "deepseek",
+            "model_name": "deepseek-reasoner",
+            "configured": deepseek_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c", "skeptic"],
+        },
+        {
+            "id": "deepseek:deepseek-chat",
+            "provider": "deepseek",
+            "model_name": "deepseek-chat",
+            "configured": deepseek_avail,
+            "recommended_roles": ["solver_b", "solver_c"],
+        },
         {
             "id": "gemini:gemini-2.5-pro",
             "provider": "gemini",

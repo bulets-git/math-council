@@ -76,6 +76,8 @@ class ProofStepSchema(BaseModel):
 
 
 class SolverOutputSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     task_type: Literal["solve", "revise"] = "solve"
     status: Literal["completed", "partial", "failed"] = "completed"
     summary: str
@@ -83,6 +85,7 @@ class SolverOutputSchema(BaseModel):
     proof_steps: list[ProofStepSchema] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
     confidence: ConfidenceLevel = "medium"
+    reasoning_content: str | None = Field(default=None, description="Chuỗi suy luận reasoning tokens / thinking content")
 
 
 class SourceDiscoveryOutputSchema(BaseModel):
@@ -202,9 +205,12 @@ class ClaimItem(BaseModel):
 
 
 class SolverOutput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     summary: str = Field(..., description="Tóm tắt ý tưởng giải")
     claims: list[ClaimItem] = Field(..., min_length=1, description="Các bước suy luận dạng mệnh đề có cấu trúc")
     final_answer: str = Field(..., description="Đáp số hoặc kết luận cuối cùng")
+    reasoning_content: str | None = Field(default=None, description="Chuỗi suy luận reasoning tokens / thinking content")
 
 
 class ChallengeItem(BaseModel):
