@@ -83,3 +83,8 @@ api_v1_router.include_router(runs_router)
 api_v1_router.include_router(models_router)
 
 app.include_router(api_v1_router)
+
+
+@app.get("/")
+async def root():
+    return {"message": "Math Council API is running", "docs": "/docs", "health": "/health"}
