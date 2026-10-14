@@ -1,17 +1,15 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
-
-RunStatusStep2 = Literal["queued", "failed", "cancelled"]
 
 
 class RunCreate(BaseModel):
     config: dict[str, Any] = Field(
         default_factory=lambda: {
-            "mode": "step2_skeleton",
-            "ai_enabled": False,
+            "mode": "multi_agent_council",
+            "ai_enabled": True,
             "max_rounds": 2,
             "solvers": ["solver_a", "solver_b"],
         }
@@ -29,4 +27,4 @@ class RunResponse(BaseModel):
     budget_usd: Decimal | None
     actual_cost_usd: Decimal
     created_at: datetime
-    ai_notice: str = "Chưa chạy AI (Bước 2)"
+    ai_notice: str = "Hội đồng Toán học AI (Bước 3 Multi-Agent)"
