@@ -11,64 +11,15 @@ logger = logging.getLogger("llm_gateway.factory")
 
 def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
     """Returns the appropriate LLM adapter based on the requested model name.
+    Supports 4 independent providers: Gemini, Alibaba Cloud MaaS, DeepSeek Native, and DeepInfra.
     Strictly forbids silent fallback to DeterministicMockAdapter when DEFAULT_LLM_PROVIDER == 'live' or mode == 'live'.
-    Supports routing models through OpenRouter (OPENAI_COMPATIBLE) if individual provider keys are missing.
     """
     name = model_name.lower()
-    openrouter_key = (
-        settings.OPENAI_COMPATIBLE_API_KEY
-        or os.getenv("OPENAI_COMPATIBLE_API_KEY")
-        or os.getenv("OPENROUTER_API_KEY")
-    )
-    openrouter_base = settings.OPENAI_COMPATIBLE_BASE_URL or "https://openrouter.ai/api/v1"
 
     if name.startswith("mock") or model_name == "mock-math-council":
         return DeterministicMockAdapter(model_name=model_name)
 
-    elif name.startswith("openai_compatible:") or name.startswith("openrouter:") or "openai_compatible" in name:
-        actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
-        if not openrouter_key:
-            if settings.DEFAULT_LLM_PROVIDER == "mock":
-                return DeterministicMockAdapter(model_name=model_name)
-            raise ValueError(
-                "Chưa cấu hình OPENAI_COMPATIBLE_API_KEY hoặc OPENROUTER_API_KEY trên Railway Variables."
-            )
-        return OpenAIAdapter(
-            model_name=actual_model,
-            api_key=openrouter_key,
-            api_base=openrouter_base,
-        )
-
-    elif name.startswith("deepseek:") or name.startswith("deepseek"):
-        actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
-        deepseek_base = os.getenv(
-            "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        ).rstrip("/")
-        if deepseek_key:
-            return OpenAIAdapter(
-                model_name=actual_model,
-                api_key=deepseek_key,
-                api_base=deepseek_base,
-            )
-
-        if openrouter_key:
-            openrouter_model = actual_model if actual_model.startswith("deepseek/") else f"deepseek/{actual_model}"
-            logger.info("Routing DeepSeek model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
-            return OpenAIAdapter(
-                model_name=openrouter_model,
-                api_key=openrouter_key,
-                api_base=openrouter_base,
-            )
-
-        if settings.DEFAULT_LLM_PROVIDER == "mock":
-            return DeterministicMockAdapter(model_name=model_name)
-
-        raise ValueError(
-            f"Chưa cấu hình API Key cho DeepSeek ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường DEEPSEEK_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
-        )
-
+    # 1. Alibaba Cloud Model Studio (MaaS)
     elif name.startswith("alibaba:") or name.startswith("alibaba"):
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
         alibaba_key = os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", ""))
@@ -86,24 +37,34 @@ def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
                 api_key=alibaba_key,
                 api_base=alibaba_base,
             )
-
-        if openrouter_key:
-            openrouter_model = actual_model if "/" in actual_model else f"qwen/{actual_model}"
-            logger.info("Routing Alibaba model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
-            return OpenAIAdapter(
-                model_name=openrouter_model,
-                api_key=openrouter_key,
-                api_base=openrouter_base,
-            )
-
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-
         raise ValueError(
             f"Chưa cấu hình API Key cho Alibaba ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường ALIBABA_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+            "Vui lòng thiết lập biến môi trường ALIBABA_API_KEY trên Railway Variables."
         )
 
+    # 2. DeepSeek Native
+    elif name.startswith("deepseek:") or name.startswith("deepseek"):
+        actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
+        deepseek_base = os.getenv(
+            "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        ).rstrip("/")
+        if deepseek_key:
+            return OpenAIAdapter(
+                model_name=actual_model,
+                api_key=deepseek_key,
+                api_base=deepseek_base,
+            )
+        if settings.DEFAULT_LLM_PROVIDER == "mock":
+            return DeterministicMockAdapter(model_name=model_name)
+        raise ValueError(
+            f"Chưa cấu hình API Key cho DeepSeek ('{model_name}'). "
+            "Vui lòng thiết lập biến môi trường DEEPSEEK_API_KEY trên Railway Variables."
+        )
+
+    # 3. DeepInfra
     elif name.startswith("deepinfra:") or name.startswith("deepinfra"):
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
         deepinfra_key = os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", ""))
@@ -117,93 +78,51 @@ def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
                 api_key=deepinfra_key,
                 api_base=deepinfra_base,
             )
-
-        if openrouter_key:
-            openrouter_model = actual_model
-            logger.info("Routing DeepInfra model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
-            return OpenAIAdapter(
-                model_name=openrouter_model,
-                api_key=openrouter_key,
-                api_base=openrouter_base,
-            )
-
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-
         raise ValueError(
             f"Chưa cấu hình API Key cho DeepInfra ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường DEEPINFRA_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+            "Vui lòng thiết lập biến môi trường DEEPINFRA_API_KEY trên Railway Variables."
         )
 
+    # 4. Google Gemini
     elif name.startswith("gemini") or "google" in name:
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
         gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
         if gemini_key:
             return GeminiAdapter(model_name=actual_model, api_key=gemini_key)
-        
-        # Transparent routing through OpenRouter if available
-        if openrouter_key:
-            openrouter_model = actual_model if actual_model.startswith("google/") else f"google/{actual_model}"
-            logger.info("Routing Gemini model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
-            return OpenAIAdapter(
-                model_name=openrouter_model,
-                api_key=openrouter_key,
-                api_base=openrouter_base,
-            )
-
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-
         raise ValueError(
             f"Chưa cấu hình API Key cho Gemini ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường GEMINI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+            "Vui lòng thiết lập biến môi trường GEMINI_API_KEY trên Railway Variables."
         )
 
-    elif name.startswith("gpt") or name.startswith("o1") or name.startswith("o3") or "openai" in name:
+    # Optional Native OpenAI
+    elif name.startswith("openai:") or name.startswith("gpt") or name.startswith("o1") or name.startswith("o3"):
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
         openai_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
         if openai_key:
             return OpenAIAdapter(model_name=actual_model, api_key=openai_key)
-
-        if openrouter_key:
-            openrouter_model = actual_model if actual_model.startswith("openai/") else f"openai/{actual_model}"
-            logger.info("Routing OpenAI model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
-            return OpenAIAdapter(
-                model_name=openrouter_model,
-                api_key=openrouter_key,
-                api_base=openrouter_base,
-            )
-
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-
         raise ValueError(
             f"Chưa cấu hình API Key cho OpenAI ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường OPENAI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+            "Vui lòng thiết lập biến môi trường OPENAI_API_KEY trên Railway Variables."
         )
 
-    elif name.startswith("claude") or "anthropic" in name:
+    # Optional Native Anthropic
+    elif name.startswith("anthropic:") or name.startswith("claude"):
         actual_model = model_name.split(":", 1)[1] if ":" in model_name else model_name
         anthropic_key = settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")
         if anthropic_key:
             from app.llm_gateway.base_and_adapters import AnthropicAdapter
             return AnthropicAdapter()
-
-        if openrouter_key:
-            openrouter_model = actual_model if actual_model.startswith("anthropic/") else f"anthropic/{actual_model}"
-            logger.info("Routing Anthropic Claude model '%s' via OpenRouter as '%s'", actual_model, openrouter_model)
-            return OpenAIAdapter(
-                model_name=openrouter_model,
-                api_key=openrouter_key,
-                api_base=openrouter_base,
-            )
-
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-
         raise ValueError(
             f"Chưa cấu hình API Key cho Anthropic Claude ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường ANTHROPIC_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway."
+            "Vui lòng thiết lập biến môi trường ANTHROPIC_API_KEY trên Railway Variables."
         )
 
     elif settings.DEFAULT_LLM_PROVIDER == "mock":

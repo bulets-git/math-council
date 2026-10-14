@@ -308,11 +308,12 @@ export default function RunDetailPage() {
                   {run.config?.error || 'Đã xảy ra lỗi trong quá trình thực thi AI. Vui lòng kiểm tra API Key hoặc Worker logs trên server.'}
                 </div>
                 <div className="text-[11px] text-rose-700 bg-rose-100/60 p-2.5 rounded-xl border border-rose-200/60">
-                  💡 <strong>Cách xử lý:</strong> Nếu lỗi do thiếu API Key, truy cập <strong>Railway Dashboard</strong> &rarr; chọn service <strong>api</strong> &rarr; tab <strong>Variables</strong> và thêm ít nhất một khóa:
+                  💡 <strong>Cách xử lý:</strong> Nếu lỗi do thiếu API Key, truy cập <strong>Railway Dashboard</strong> &rarr; chọn service <strong>api</strong> &rarr; tab <strong>Variables</strong> và cấu hình các khóa tương ứng:
                   <ul className="list-disc list-inside mt-1 space-y-0.5 font-mono text-[10px]">
-                    <li><code>OPENAI_COMPATIBLE_API_KEY</code>: Khóa OpenRouter (hỗ trợ tất cả mô hình Gemini, Claude, OpenAI)</li>
-                    <li><code>GEMINI_API_KEY</code>: Khóa Google AI Studio (cho Normalizer &amp; Solver A)</li>
-                    <li><code>OPENAI_API_KEY</code>: Khóa OpenAI (cho Solver B &amp; Judge)</li>
+                    <li><code>GEMINI_API_KEY</code>: Khóa Google AI Studio (Normalizer: Gemini 2.5 Flash)</li>
+                    <li><code>ALIBABA_API_KEY</code>: Khóa Alibaba Cloud Model Studio (Solver A: Qwen2.5-Math-72B)</li>
+                    <li><code>DEEPSEEK_API_KEY</code>: Khóa DeepSeek Native (Solver B: DeepSeek Reasoner)</li>
+                    <li><code>DEEPINFRA_API_KEY</code>: Khóa DeepInfra (Skeptic &amp; Judge: Llama-3.3-70B / Qwen2.5-72B)</li>
                   </ul>
                 </div>
               </div>

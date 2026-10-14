@@ -274,7 +274,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         if not api_key:
             raise RuntimeError(
                 f"Chưa cấu hình ANTHROPIC_API_KEY cho model '{model_name}'. "
-                "Vui lòng thiết lập ANTHROPIC_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway Variables."
+                "Vui lòng thiết lập biến môi trường ANTHROPIC_API_KEY trên Railway Variables."
             )
 
         full_system_prompt = build_schema_instruction(system_prompt, response_schema)
@@ -337,7 +337,7 @@ class GeminiAdapter(BaseLLMAdapter):
         if not api_key:
             raise RuntimeError(
                 f"Chưa cấu hình GEMINI_API_KEY cho model '{model_name}'. "
-                "Vui lòng thiết lập GEMINI_API_KEY hoặc OPENAI_COMPATIBLE_API_KEY (OpenRouter) trên Railway Variables."
+                "Vui lòng thiết lập biến môi trường GEMINI_API_KEY trên Railway Variables."
             )
 
         full_system_prompt = build_schema_instruction(system_prompt, response_schema)
@@ -619,11 +619,8 @@ class MultiProviderRouter:
         self.adapters: dict[str, BaseLLMAdapter] = {
             "mock": DeterministicMockAdapter(),
             "gemini": GeminiAdapter(),
-            "openai": OpenAIAdapter(),
-            "anthropic": AnthropicAdapter(),
-            "openai_compatible": OpenAICompatibleAdapter(),
-            "deepseek": deepseek_adapter,
             "alibaba": AlibabaAdapter(),
+            "deepseek": deepseek_adapter,
             "deepinfra": DeepInfraAdapter(),
         }
 
@@ -638,33 +635,18 @@ class MultiProviderRouter:
             provider_key, model_name = settings.DEFAULT_LLM_PROVIDER, role_model_spec
 
         import os
-        openrouter_key = (
-            settings.OPENAI_COMPATIBLE_API_KEY
-            or os.getenv("OPENAI_COMPATIBLE_API_KEY")
-            or os.getenv("OPENROUTER_API_KEY")
-        )
 
-        # Hỗ trợ provider deepseek: (ví dụ deepseek:deepseek-reasoner)
-        if provider_key == "deepseek":
-            deepseek_base = os.getenv(
-                "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-            ).rstrip("/")
-            deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
+        # 1. Google Gemini
+        if provider_key == "gemini":
+            gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+            if not gemini_key and not self.force_mock:
+                raise ValueError(
+                    f"Chưa cấu hình GEMINI_API_KEY cho model '{model_name}'. "
+                    "Vui lòng thiết lập biến môi trường GEMINI_API_KEY trên Railway Variables."
+                )
+            return self.adapters["gemini"], model_name
 
-            # Nếu chưa có DEEPSEEK_API_KEY nhưng có khóa OpenRouter, tự động định tuyến qua OpenRouter
-            if not deepseek_key and openrouter_key:
-                openrouter_model = model_name if model_name.startswith("deepseek/") else f"deepseek/{model_name}"
-                logger.info("MultiProviderRouter: Routing deepseek '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
-                return self.adapters["openai_compatible"], openrouter_model
-
-            adapter = OpenAIAdapter(
-                api_key=deepseek_key,
-                base_url=deepseek_base,
-            )
-            adapter.provider_name = "deepseek"
-            return adapter, model_name
-
-        # Hỗ trợ provider alibaba: (ví dụ alibaba:qwen-plus, alibaba:qwen-max)
+        # 2. Alibaba Cloud MaaS
         if provider_key == "alibaba":
             alibaba_base = os.getenv(
                 "ALIBABA_BASE_URL",
@@ -675,44 +657,43 @@ class MultiProviderRouter:
                 ),
             ).rstrip("/")
             alibaba_key = os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", ""))
-
-            if not alibaba_key and openrouter_key:
-                openrouter_model = model_name if "/" in model_name else f"qwen/{model_name}"
-                logger.info("MultiProviderRouter: Routing alibaba '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
-                return self.adapters["openai_compatible"], openrouter_model
-
+            if not alibaba_key and not self.force_mock:
+                raise ValueError(
+                    f"Chưa cấu hình ALIBABA_API_KEY cho model '{model_name}'. "
+                    "Vui lòng thiết lập biến môi trường ALIBABA_API_KEY trên Railway Variables."
+                )
             adapter = AlibabaAdapter(api_key=alibaba_key, base_url=alibaba_base)
             return adapter, model_name
 
-        # Hỗ trợ provider deepinfra: (ví dụ deepinfra:deepseek-ai/DeepSeek-V3)
+        # 3. DeepSeek Native
+        if provider_key == "deepseek":
+            deepseek_base = os.getenv(
+                "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+            ).rstrip("/")
+            deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
+            if not deepseek_key and not self.force_mock:
+                raise ValueError(
+                    f"Chưa cấu hình DEEPSEEK_API_KEY cho model '{model_name}'. "
+                    "Vui lòng thiết lập biến môi trường DEEPSEEK_API_KEY trên Railway Variables."
+                )
+            adapter = OpenAIAdapter(api_key=deepseek_key, base_url=deepseek_base)
+            adapter.provider_name = "deepseek"
+            return adapter, model_name
+
+        # 4. DeepInfra
         if provider_key == "deepinfra":
             deepinfra_base = os.getenv(
                 "DEEPINFRA_BASE_URL",
                 getattr(settings, "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
             ).rstrip("/")
             deepinfra_key = os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", ""))
-
-            if not deepinfra_key and openrouter_key:
-                openrouter_model = model_name
-                logger.info("MultiProviderRouter: Routing deepinfra '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
-                return self.adapters["openai_compatible"], openrouter_model
-
+            if not deepinfra_key and not self.force_mock:
+                raise ValueError(
+                    f"Chưa cấu hình DEEPINFRA_API_KEY cho model '{model_name}'. "
+                    "Vui lòng thiết lập biến môi trường DEEPINFRA_API_KEY trên Railway Variables."
+                )
             adapter = DeepInfraAdapter(api_key=deepinfra_key, base_url=deepinfra_base)
             return adapter, model_name
-
-        # Fallback routing to OpenRouter when individual provider keys are absent
-        if provider_key == "gemini" and not (settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")) and openrouter_key:
-            openrouter_model = model_name if model_name.startswith("google/") else f"google/{model_name}"
-            logger.info("MultiProviderRouter: Routing gemini '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
-            return self.adapters["openai_compatible"], openrouter_model
-        if provider_key == "openai" and not (settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")) and openrouter_key:
-            openrouter_model = model_name if model_name.startswith("openai/") else f"openai/{model_name}"
-            logger.info("MultiProviderRouter: Routing openai '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
-            return self.adapters["openai_compatible"], openrouter_model
-        if provider_key == "anthropic" and not (settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")) and openrouter_key:
-            openrouter_model = model_name if model_name.startswith("anthropic/") else f"anthropic/{model_name}"
-            logger.info("MultiProviderRouter: Routing anthropic '%s' -> '%s' via OpenRouter", model_name, openrouter_model)
-            return self.adapters["openai_compatible"], openrouter_model
 
         adapter = self.adapters.get(provider_key)
         if not adapter:
@@ -722,7 +703,9 @@ class MultiProviderRouter:
                 role_model_spec,
                 list(self.adapters.keys()),
             )
-            raise ValueError(f"Provider '{provider_key}' không được hỗ trợ. Hỗ trợ: {list(self.adapters.keys())}")
+            raise ValueError(
+                f"Provider '{provider_key}' không được hỗ trợ. Hệ thống sử dụng 4 nhà cung cấp độc lập: gemini, alibaba, deepseek, deepinfra (và mock)."
+            )
         return adapter, model_name
 
     async def call_for_role(
@@ -759,25 +742,25 @@ class MultiProviderRouter:
 
 def get_available_models_catalog() -> list[dict[str, Any]]:
     import os
-    openrouter_avail = bool(
-        settings.OPENAI_COMPATIBLE_API_KEY
-        or os.getenv("OPENAI_COMPATIBLE_API_KEY")
-        or os.getenv("OPENROUTER_API_KEY")
-    )
-    gemini_avail = bool(settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")) or openrouter_avail
-    openai_avail = bool(settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")) or openrouter_avail
-    anthropic_avail = bool(settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")) or openrouter_avail
+    gemini_avail = bool(settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"))
     deepseek_avail = bool(
-        os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", "")) or openrouter_avail
+        os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
     )
     alibaba_avail = bool(
-        os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", "")) or openrouter_avail
+        os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", ""))
     )
     deepinfra_avail = bool(
-        os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", "")) or openrouter_avail
+        os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", ""))
     )
 
     return [
+        {
+            "id": "alibaba:qwen2.5-math-72b-instruct",
+            "provider": "alibaba",
+            "model_name": "qwen2.5-math-72b-instruct",
+            "configured": alibaba_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c", "judge"],
+        },
         {
             "id": "alibaba:qwen-plus",
             "provider": "alibaba",
@@ -791,20 +774,6 @@ def get_available_models_catalog() -> list[dict[str, Any]]:
             "model_name": "qwen-max",
             "configured": alibaba_avail,
             "recommended_roles": ["solver_a", "solver_b", "skeptic", "judge"],
-        },
-        {
-            "id": "deepinfra:deepseek-ai/DeepSeek-V3",
-            "provider": "deepinfra",
-            "model_name": "deepseek-ai/DeepSeek-V3",
-            "configured": deepinfra_avail,
-            "recommended_roles": ["solver_a", "solver_b", "solver_c"],
-        },
-        {
-            "id": "deepinfra:deepseek-ai/DeepSeek-R1",
-            "provider": "deepinfra",
-            "model_name": "deepseek-ai/DeepSeek-R1",
-            "configured": deepinfra_avail,
-            "recommended_roles": ["solver_a", "solver_b", "solver_c", "skeptic"],
         },
         {
             "id": "deepseek:deepseek-reasoner",
@@ -821,60 +790,46 @@ def get_available_models_catalog() -> list[dict[str, Any]]:
             "recommended_roles": ["solver_b", "solver_c"],
         },
         {
+            "id": "deepinfra:meta-llama/Llama-3.3-70B-Instruct",
+            "provider": "deepinfra",
+            "model_name": "meta-llama/Llama-3.3-70B-Instruct",
+            "configured": deepinfra_avail,
+            "recommended_roles": ["skeptic", "judge"],
+        },
+        {
+            "id": "deepinfra:Qwen/Qwen2.5-72B-Instruct",
+            "provider": "deepinfra",
+            "model_name": "Qwen/Qwen2.5-72B-Instruct",
+            "configured": deepinfra_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c", "judge"],
+        },
+        {
+            "id": "deepinfra:deepseek-ai/DeepSeek-R1",
+            "provider": "deepinfra",
+            "model_name": "deepseek-ai/DeepSeek-R1",
+            "configured": deepinfra_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c", "skeptic"],
+        },
+        {
+            "id": "deepinfra:deepseek-ai/DeepSeek-V3",
+            "provider": "deepinfra",
+            "model_name": "deepseek-ai/DeepSeek-V3",
+            "configured": deepinfra_avail,
+            "recommended_roles": ["solver_a", "solver_b", "solver_c"],
+        },
+        {
+            "id": "gemini:gemini-2.5-flash",
+            "provider": "gemini",
+            "model_name": "gemini-2.5-flash",
+            "configured": gemini_avail,
+            "recommended_roles": ["normalizer", "source_finder"],
+        },
+        {
             "id": "gemini:gemini-2.5-pro",
             "provider": "gemini",
             "model_name": "gemini-2.5-pro",
             "configured": gemini_avail,
             "recommended_roles": ["solver_a", "solver_b", "judge"],
-        },
-        {
-            "id": "openai:gpt-4o",
-            "provider": "openai",
-            "model_name": "gpt-4o",
-            "configured": openai_avail,
-            "recommended_roles": ["solver_a", "solver_b", "judge"],
-        },
-        {
-            "id": "openai:o3-mini",
-            "provider": "openai",
-            "model_name": "o3-mini",
-            "configured": openai_avail,
-            "recommended_roles": ["solver_a", "solver_b", "skeptic"],
-        },
-        {
-            "id": "openai_compatible:openai/o3-mini",
-            "provider": "openai_compatible",
-            "model_name": "openai/o3-mini",
-            "configured": openrouter_avail,
-            "recommended_roles": ["solver_a", "solver_c", "skeptic"],
-        },
-        {
-            "id": "openai_compatible:deepseek/deepseek-chat",
-            "provider": "openai_compatible",
-            "model_name": "deepseek/deepseek-chat",
-            "configured": openrouter_avail,
-            "recommended_roles": ["solver_b", "solver_c"],
-        },
-        {
-            "id": "anthropic:claude-3-7-sonnet-latest",
-            "provider": "anthropic",
-            "model_name": "claude-3-7-sonnet-latest",
-            "configured": anthropic_avail,
-            "recommended_roles": ["skeptic", "solver_b", "judge"],
-        },
-        {
-            "id": "openai_compatible:deepseek-reasoner",
-            "provider": "openai_compatible",
-            "model_name": "deepseek-reasoner",
-            "configured": openrouter_avail,
-            "recommended_roles": ["solver_a", "solver_c", "skeptic"],
-        },
-        {
-            "id": "openai_compatible:google/gemini-2.5-flash:online",
-            "provider": "openai_compatible",
-            "model_name": "google/gemini-2.5-flash:online",
-            "configured": openrouter_avail,
-            "recommended_roles": ["source_finder"],
         },
         {
             "id": "mock:deterministic-olympiad-v1",

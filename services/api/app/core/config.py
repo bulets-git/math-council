@@ -29,43 +29,28 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    OPENAI_COMPATIBLE_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENAI_COMPATIBLE_API_KEY: str = ""
 
-    @field_validator("OPENAI_COMPATIBLE_API_KEY", mode="before")
-    @classmethod
-    def assemble_openai_compatible_key(cls, v: str | None) -> str:
-        import os
-        if v:
-            return v
-        return os.getenv("OPENROUTER_API_KEY", "") or ""
+    # 4 Nhà cung cấp API độc lập:
+    # 1. Google Gemini
+    GEMINI_API_KEY: str = ""
 
-    @field_validator("OPENAI_COMPATIBLE_BASE_URL", mode="before")
-    @classmethod
-    def assemble_openai_compatible_base_url(cls, v: str | None) -> str:
-        import os
-        key = os.getenv("OPENAI_COMPATIBLE_API_KEY", "") or os.getenv("OPENROUTER_API_KEY", "")
-        if key.startswith("sk-or-") or os.getenv("OPENROUTER_API_KEY"):
-            return "https://openrouter.ai/api/v1"
-        return v or "https://openrouter.ai/api/v1"
-
-    # DeepSeek API Provider
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_API_KEY: str = ""
-
-    # Alibaba Cloud Model Studio (MaaS) API Provider
+    # 2. Alibaba Cloud Model Studio (MaaS)
     ALIBABA_BASE_URL: str = "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
     ALIBABA_API_KEY: str = ""
 
-    # DeepInfra API Provider
+    # 3. DeepSeek Native
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_API_KEY: str = ""
+
+    # 4. DeepInfra
     DEEPINFRA_BASE_URL: str = "https://api.deepinfra.com/v1/openai"
     DEEPINFRA_API_KEY: str = ""
 
     # Cấu hình Model mặc định cho từng vai trò trong Hội đồng (provider:model_name)
     ROLE_NORMALIZER_MODEL: str = "gemini:gemini-2.5-flash"
-    ROLE_SOURCE_FINDER_MODEL: str = "openai_compatible:google/gemini-2.5-flash:online"
-    ROLE_SOLVER_A_MODEL: str = "gemini:gemini-2.5-pro"
-    ROLE_SOLVER_B_MODEL: str = "openai:gpt-4o"
+    ROLE_SOURCE_FINDER_MODEL: str = "gemini:gemini-2.5-flash"
+    ROLE_SOLVER_A_MODEL: str = "alibaba:qwen2.5-math-72b-instruct"
+    ROLE_SOLVER_B_MODEL: str = "deepseek:deepseek-reasoner"
 
     @field_validator("ROLE_SOLVER_B_MODEL", mode="before")
     @classmethod
@@ -74,16 +59,11 @@ class Settings(BaseSettings):
         env_val = os.getenv("ROLE_SOLVER_B_MODEL")
         if env_val:
             return env_val
-        if v and v != "openai:gpt-4o":
-            return v
-        # Mặc định đọc từ deepseek:deepseek-reasoner nếu DEEPSEEK_API_KEY được cấu hình
-        if os.getenv("DEEPSEEK_API_KEY"):
-            return "deepseek:deepseek-reasoner"
-        return v or "openai:gpt-4o"
+        return v or "deepseek:deepseek-reasoner"
 
-    ROLE_SOLVER_C_MODEL: str = "openai_compatible:openai/o3-mini"
-    ROLE_SKEPTIC_MODEL: str = "anthropic:claude-3-7-sonnet-latest"
-    ROLE_JUDGE_MODEL: str = "openai:gpt-4o"
+    ROLE_SOLVER_C_MODEL: str = "deepinfra:Qwen/Qwen2.5-72B-Instruct"
+    ROLE_SKEPTIC_MODEL: str = "deepinfra:meta-llama/Llama-3.3-70B-Instruct"
+    ROLE_JUDGE_MODEL: str = "deepinfra:Qwen/Qwen2.5-72B-Instruct"
 
     # Bật/tắt tính năng tìm nguồn gốc đề toán
     ENABLE_SOURCE_DISCOVERY: bool = True

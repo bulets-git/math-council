@@ -17,7 +17,9 @@ def test_models_catalog_and_router():
     providers = {m["provider"] for m in catalog}
     assert "mock" in providers
     assert "gemini" in providers
-    assert "openai" in providers
+    assert "alibaba" in providers
+    assert "deepseek" in providers
+    assert "deepinfra" in providers
 
     router = MultiProviderRouter(force_mock=True)
     adapter, model_name = router.resolve_spec("mock:deterministic-olympiad-v1")
@@ -111,6 +113,6 @@ def test_strict_no_mock_fallback_in_live_mode(monkeypatch):
     with pytest.raises(ValueError, match="Tuyệt đối cấm fallback ngầm về Mock Adapter"):
         get_llm_adapter("unknown-custom-model-xyz")
 
-    # Kiểm tra solver_c model trong config là model OpenRouter chuẩn
-    assert "openai_compatible" in settings.ROLE_SOLVER_C_MODEL
-    assert "o3-mini" in settings.ROLE_SOLVER_C_MODEL or "deepseek" in settings.ROLE_SOLVER_C_MODEL
+    # Kiểm tra solver_c model trong config là model DeepInfra chuẩn
+    assert "deepinfra" in settings.ROLE_SOLVER_C_MODEL
+    assert "Qwen" in settings.ROLE_SOLVER_C_MODEL
