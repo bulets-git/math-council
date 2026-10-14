@@ -1,0 +1,114 @@
+{
+  "version": "1.0",
+  "description": "Bộ dữ liệu kiểm thử Toán HSG/Olympiad & Bẫy ngụy biện cho Math Council",
+  "problems": [
+    {
+      "code": "B01_FE_MISSING_CASE",
+      "title": "Phương trình hàm hiệu bình phương (Bẫy chia cho 0)",
+      "subject": "Đại số & Giải tích",
+      "difficulty": "VMO / Quốc gia",
+      "input_type": "text",
+      "statement_original": "Tìm tất cả các hàm số $f: \\mathbb{R} \\to \\mathbb{R}$ thỏa mãn:\n$$f(x^2 - y^2) = x f(x) - y f(y), \\quad \\forall x, y \\in \\mathbb{R}$$",
+      "mock_scenario": "fallacious_missing_case",
+      "expected_skeptic_challenge": {
+        "target_claim_id": "C3",
+        "error_type": "missing_case",
+        "severity": "critical",
+        "explanation": "Chia hai vế cho $(f(x) - x)$ khi chưa xét trường hợp biểu thức này bằng 0. Thực tế mọi hàm $f(x) = kx$ đều thỏa mãn."
+      }
+    },
+    {
+      "code": "B02_NT_INVALID_LTE",
+      "title": "Phương trình mũ Diophantine (Bẫy áp dụng sai LTE cho p=2)",
+      "subject": "Số học",
+      "difficulty": "Chuyên / Khu vực",
+      "input_type": "text",
+      "statement_original": "Tìm tất cả các cặp số nguyên dương $(n, k)$ sao cho:\n$$3^n + 1 = 2^k$$",
+      "mock_scenario": "fallacious_invalid_inference",
+      "expected_skeptic_challenge": {
+        "target_claim_id": "C2",
+        "error_type": "invalid_inference",
+        "severity": "critical",
+        "explanation": "Áp dụng sai công thức Bổ đề nâng số mũ (LTE) của số nguyên tố lẻ cho $p=2$."
+      }
+    },
+    {
+      "code": "B03_INEQ_FALSE_WLOG",
+      "title": "Bất đẳng thức hoán vị (Bẫy giả sử thứ tự WLOG sai)",
+      "subject": "Bất đẳng thức",
+      "difficulty": "VMO / Quốc gia",
+      "input_type": "text",
+      "statement_original": "Cho các số thực dương $a, b, c$ thỏa mãn $a + b + c = 3$. Chứng minh rằng:\n$$\\frac{a}{1 + b^2} + \\frac{b}{1 + c^2} + \\frac{c}{1 + a^2} \\ge \\frac{3}{2}$$",
+      "mock_scenario": "fallacious_invalid_inference",
+      "expected_skeptic_challenge": {
+        "target_claim_id": "C1",
+        "error_type": "invalid_inference",
+        "severity": "critical",
+        "explanation": "Biểu thức chỉ có tính hoán vị vòng quanh (cyclic), không đối xứng toàn phần nên không được giả sử $a \\ge b \\ge c$."
+      }
+    },
+    {
+      "code": "B04_COMB_UNSUPPORTED",
+      "title": "Phủ bàn cờ bằng quân Domino cực tiểu (Bẫy khẳng định vô căn cứ)",
+      "subject": "Tổ hợp",
+      "difficulty": "VMO / TST",
+      "input_type": "text",
+      "statement_original": "Trên bàn cờ kích thước $2n \\times 2n$, người ta đặt một số quân domino $1 \\times 2$ hoặc $2 \\times 1$ không chồng lên nhau sao cho không thể đặt thêm bất kỳ quân domino nào nữa. Tìm giá trị nhỏ nhất của số quân domino đã được đặt.",
+      "mock_scenario": "fallacious_unsupported_claim"
+    },
+    {
+      "code": "B05_GEO_AMBIGUOUS",
+      "title": "Đường thẳng qua trực tâm vuông góc trung tuyến (Bẫy cấu hình hình học)",
+      "subject": "Hình học",
+      "difficulty": "VMO / Quốc gia",
+      "input_type": "text",
+      "statement_original": "Cho tam giác $ABC$ nhọn không cân nội tiếp đường tròn $(O)$, trực tâm $H$. Gọi $M$ là trung điểm của $BC$. Đường thẳng qua $H$ vuông góc với $MH$ cắt $AB, AC$ lần lượt tại $P, Q$. Chứng minh rằng $HP = HQ$.",
+      "mock_scenario": "fallacious_ambiguous"
+    },
+    {
+      "code": "B06_POLY_CALC_ERROR",
+      "title": "Ước nguyên tố của đa thức bậc 4 (Bẫy tính toán sai)",
+      "subject": "Số học",
+      "difficulty": "Chuyên / Khu vực",
+      "input_type": "text",
+      "statement_original": "Tìm tất cả các số nguyên tố $p$ sao cho tồn tại số nguyên dương $n$ thỏa mãn $p \\mid n^4 - n^2 + 1$.",
+      "mock_scenario": "fallacious_calculation"
+    },
+    {
+      "code": "B07_DAG_CIRCULAR",
+      "title": "Bất đẳng thức Nesbitt biến thể (Kịch bản kiểm tra Chu trình DAG)",
+      "subject": "Bất đẳng thức",
+      "difficulty": "Chuyên / Khu vực",
+      "input_type": "text",
+      "statement_original": "Cho các số thực dương $x, y, z$ thỏa mãn $xyz = 1$. Chứng minh rằng:\n$$\\frac{x^2}{y+z} + \\frac{y^2}{z+x} + \\frac{z^2}{x+y} \\ge \\frac{3}{2}$$",
+      "mock_scenario": "dag_cycle_error"
+    },
+    {
+      "code": "B08_NEEDS_REVIEW_TYPO",
+      "title": "Đề bài nghi ngờ chép sai dấu bất đẳng thức (Kiểm tra trạng thái needs_review)",
+      "subject": "Bất đẳng thức",
+      "difficulty": "Cơ bản",
+      "input_type": "text",
+      "statement_original": "Cho các số thực dương $a, b, c$ thỏa mãn $a + b + c = 3$. Chứng minh rằng:\n$$a^2 + b^2 + c^2 \\le 1$$",
+      "mock_scenario": "needs_review_malformed"
+    },
+    {
+      "code": "B09_VALID_IMO1959",
+      "title": "IMO 1959 Bài 1 — Phân số tối giản (Kịch bản Lời giải Đúng chuẩn)",
+      "subject": "Số học",
+      "difficulty": "IMO / Quốc tế",
+      "input_type": "text",
+      "statement_original": "Chứng minh rằng với mọi số nguyên dương $n$, phân số sau đây là phân số tối giản:\n$$\\frac{21n + 4}{14n + 3}$$",
+      "mock_scenario": "valid_complete_proof"
+    },
+    {
+      "code": "B10_VALID_PIGEONHOLE",
+      "title": "Chọn số chia hết trong tập con của {1, 2, ..., 2n} (Kịch bản Lời giải Đúng chuẩn)",
+      "subject": "Tổ hợp",
+      "difficulty": "Chuyên / Khu vực",
+      "input_type": "text",
+      "statement_original": "Cho tập hợp $S = \\{1, 2, \\dots, 2n\\}$. Từ $S$ ta chọn ra $n+1$ số phân biệt bất kỳ. Chứng minh rằng trong các số được chọn, luôn tồn tại hai số sao cho số này là bội của số kia.",
+      "mock_scenario": "valid_complete_proof"
+    }
+  ]
+}
