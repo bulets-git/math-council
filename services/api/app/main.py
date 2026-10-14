@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -88,3 +88,8 @@ app.include_router(api_v1_router)
 @app.get("/")
 async def root():
     return {"message": "Math Council API is running", "docs": "/docs", "health": "/health"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
