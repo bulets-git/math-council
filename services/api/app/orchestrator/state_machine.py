@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from decimal import Decimal
+from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.budget.manager import BudgetExhaustedError, budget_manager
