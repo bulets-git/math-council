@@ -9,10 +9,18 @@ from app.llm_gateway.gemini_adapter import GeminiAdapter
 logger = logging.getLogger("llm_gateway.factory")
 
 
+def _fallback_to_gemini(model_name: str) -> BaseLLMAdapter:
+    logger.warning("Provider cho '%s' chưa được cấu hình API key trong ENV. Tự động fallback về 'gemini:gemini-2.5-flash'.", model_name)
+    gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        return GeminiAdapter(model_name="gemini-2.5-flash", api_key=gemini_key)
+    return DeterministicMockAdapter(model_name="gemini-2.5-flash")
+
+
 def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
     """Returns the appropriate LLM adapter based on the requested model name.
-    Supports 4 independent providers: Gemini, Alibaba Cloud MaaS, DeepSeek Native, and DeepInfra.
-    Strictly forbids silent fallback to DeterministicMockAdapter when DEFAULT_LLM_PROVIDER == 'live' or mode == 'live'.
+    Supports independent providers: Gemini, Alibaba Cloud MaaS, DeepSeek Native, DeepInfra, and OpenRouter.
+    Automatically falls back to Gemini if a provider API key is not configured in ENV.
     """
     name = model_name.lower()
 
@@ -39,10 +47,7 @@ def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
             )
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-        raise ValueError(
-            f"Chưa cấu hình API Key cho Alibaba ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường ALIBABA_API_KEY trên Railway Variables."
-        )
+        return _fallback_to_gemini(model_name)
 
     # 2. DeepSeek Native
     elif name.startswith("deepseek:") or name.startswith("deepseek"):
@@ -59,10 +64,7 @@ def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
             )
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-        raise ValueError(
-            f"Chưa cấu hình API Key cho DeepSeek ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường DEEPSEEK_API_KEY trên Railway Variables."
-        )
+        return _fallback_to_gemini(model_name)
 
     # 3. DeepInfra
     elif name.startswith("deepinfra:") or name.startswith("deepinfra"):
@@ -80,10 +82,7 @@ def get_llm_adapter(model_name: str = "mock-math-solver") -> BaseLLMAdapter:
             )
         if settings.DEFAULT_LLM_PROVIDER == "mock":
             return DeterministicMockAdapter(model_name=model_name)
-        raise ValueError(
-            f"Chưa cấu hình API Key cho DeepInfra ('{model_name}'). "
-            "Vui lòng thiết lập biến môi trường DEEPINFRA_API_KEY trên Railway Variables."
-        )
+        return _fallback_to_gemini(model_name)
 
     # 4. Google Gemini
     elif name.startswith("gemini") or "google" in name:

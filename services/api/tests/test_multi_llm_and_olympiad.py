@@ -113,6 +113,5 @@ def test_strict_no_mock_fallback_in_live_mode(monkeypatch):
     with pytest.raises(ValueError, match="Tuyệt đối cấm fallback ngầm về Mock Adapter"):
         get_llm_adapter("unknown-custom-model-xyz")
 
-    # Kiểm tra solver_c model trong config là model DeepInfra chuẩn
-    assert "deepinfra" in settings.ROLE_SOLVER_C_MODEL
-    assert "Qwen" in settings.ROLE_SOLVER_C_MODEL
+    # Kiểm tra solver_c model trong config là model Gemini chuẩn
+    assert "gemini" in settings.ROLE_SOLVER_C_MODEL

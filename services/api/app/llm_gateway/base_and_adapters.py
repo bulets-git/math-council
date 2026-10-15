@@ -257,6 +257,31 @@ class DeepInfraAdapter(OpenAICompatibleAdapter):
         super().__init__(api_key=key, base_url=url)
 
 
+class OpenRouterAdapter(OpenAICompatibleAdapter):
+    provider_name = "openrouter"
+
+    def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
+        import os
+        key = (
+            api_key
+            if api_key is not None
+            else (
+                os.getenv("OPENROUTER_API_KEY")
+                or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+                or getattr(settings, "OPENROUTER_API_KEY", "")
+            )
+        )
+        url = (
+            base_url
+            if base_url is not None
+            else (
+                os.getenv("OPENROUTER_BASE_URL")
+                or getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+            )
+        )
+        super().__init__(api_key=key, base_url=url)
+
+
 class AnthropicAdapter(BaseLLMAdapter):
     provider_name = "anthropic"
 
@@ -518,7 +543,9 @@ class DeterministicMockAdapter(BaseLLMAdapter):
     ) -> tuple[T, LLMCallResult]:
         start = time.perf_counter()
 
-        if response_schema is NormalizationOutputSchema:
+        schema_name = getattr(response_schema, "__name__", "")
+
+        if response_schema is NormalizationOutputSchema or schema_name in ("NormalizationOutputSchema", "NormalizerOutput"):
             needs_review = r"a^2 + b^2 + c^2 \le 1" in user_prompt or "NEEDS_REVIEW" in user_prompt
             subj = "Toán Olympic"
             p_lower = user_prompt.lower()
@@ -530,46 +557,78 @@ class DeterministicMockAdapter(BaseLLMAdapter):
                 subj = "Hình học"
             elif any(k in p_lower for k in ["bất đẳng thức", "am-gm", "cauchy"]):
                 subj = "Bất đẳng thức"
-            obj = NormalizationOutputSchema(
-                statement_normalized=user_prompt.strip(),
-                needs_clarification=needs_review,
-                clarification_reason=(
-                    "Đề bài có dấu hiệu chép sai chiều bất đẳng thức: với a=b=c=1 thì a^2+b^2+c^2 = 3 > 1."
-                    if needs_review
-                    else None
-                ),
-                detected_subject=subj,
-            )
-        elif response_schema is SolverOutputSchema:
-            obj = SolverOutputSchema(
-                task_type="solve",
-                status="completed",
-                summary="Biến đổi tương đương và sử dụng tính chất chia hết / bất đẳng thức cổ điển.",
-                claims=[
-                    ClaimItemSchema(
-                        claim_id="C1",
-                        statement="Thiết lập đẳng thức cơ sở hoặc điều kiện biên của bài toán.",
-                        reasoning="Biến đổi đại số trực tiếp từ giả thiết đề bài.",
-                        depends_on=[],
-                        status="unverified",
+            if schema_name == "NormalizerOutput":
+                obj = response_schema(
+                    normalized_statement=user_prompt.strip(),
+                    has_ambiguity=needs_review,
+                    ambiguity_warning=(
+                        "Đề bài có dấu hiệu chép sai chiều bất đẳng thức: với a=b=c=1 thì a^2+b^2+c^2 = 3 > 1."
+                        if needs_review
+                        else None
                     ),
-                    ClaimItemSchema(
-                        claim_id="C2",
-                        statement="Suy ra kết luận của bài toán từ mệnh đề C1.",
-                        reasoning="Kết hợp C1 và tính chất số nguyên / bất đẳng thức.",
-                        depends_on=["C1"],
-                        status="unverified",
+                    detected_subject=subj,
+                )
+            else:
+                obj = NormalizationOutputSchema(
+                    statement_normalized=user_prompt.strip(),
+                    needs_clarification=needs_review,
+                    clarification_reason=(
+                        "Đề bài có dấu hiệu chép sai chiều bất đẳng thức: với a=b=c=1 thì a^2+b^2+c^2 = 3 > 1."
+                        if needs_review
+                        else None
                     ),
-                ],
-                proof_steps=[
-                    ProofStepSchema(step_id="S1", claim_refs=["C1"], content="Bước 1: Thiết lập bổ đề C1."),
-                    ProofStepSchema(step_id="S2", claim_refs=["C1", "C2"], content="Bước 2: Hoàn tất chứng minh C2."),
-                ],
-                unresolved_questions=[],
-                confidence="high",
-            )
-        elif response_schema is SkepticOutputSchema:
-            if "21n + 4" in user_prompt:
+                    detected_subject=subj,
+                )
+        elif response_schema is SolverOutputSchema or schema_name in ("SolverOutputSchema", "SolverOutput"):
+            if schema_name == "SolverOutput":
+                obj = response_schema(
+                    summary="Biến đổi tương đương và sử dụng tính chất số học/bất đẳng thức.",
+                    final_answer="Chứng minh hoàn tất (ĐPCM)",
+                    claims=[
+                        {"label": "C1", "content": "Thiết lập bổ đề cơ sở.", "claim_type": "inference", "depends_on": []},
+                        {"label": "C2", "content": "Hoàn tất chứng minh bài toán.", "claim_type": "inference", "depends_on": ["C1"]},
+                    ],
+                )
+            else:
+                obj = SolverOutputSchema(
+                    task_type="solve",
+                    status="completed",
+                    summary="Biến đổi tương đương và sử dụng tính chất chia hết / bất đẳng thức cổ điển.",
+                    claims=[
+                        ClaimItemSchema(
+                            claim_id="C1",
+                            statement="Thiết lập đẳng thức cơ sở hoặc điều kiện biên của bài toán.",
+                            reasoning="Biến đổi đại số trực tiếp từ giả thiết đề bài.",
+                            depends_on=[],
+                            status="unverified",
+                        ),
+                        ClaimItemSchema(
+                            claim_id="C2",
+                            statement="Suy ra kết luận của bài toán từ mệnh đề C1.",
+                            reasoning="Kết hợp C1 và tính chất số nguyên / bất đẳng thức.",
+                            depends_on=["C1"],
+                            status="unverified",
+                        ),
+                    ],
+                    proof_steps=[
+                        ProofStepSchema(step_id="S1", claim_refs=["C1"], content="Bước 1: Thiết lập bổ đề C1."),
+                        ProofStepSchema(step_id="S2", claim_refs=["C1", "C2"], content="Bước 2: Hoàn tất chứng minh C2."),
+                    ],
+                    unresolved_questions=[],
+                    confidence="high",
+                )
+        elif response_schema is SkepticOutputSchema or schema_name in ("SkepticOutputSchema", "SkepticOutput"):
+            if schema_name == "SkepticOutput":
+                obj = response_schema(
+                    challenges=[
+                        {
+                            "target_claim_label": "C2",
+                            "error_type": "missing_case",
+                            "argument": "Cần làm rõ trường hợp biên khi mẫu số bằng 0.",
+                        }
+                    ]
+                )
+            elif "21n + 4" in user_prompt:
                 obj = SkepticOutputSchema(
                     overall_assessment="Lời giải chặt chẽ, tổ hợp tuyến tính đúng.",
                     challenges=[],
@@ -626,22 +685,31 @@ class DeterministicMockAdapter(BaseLLMAdapter):
                     }
                 ],
             )
-        elif response_schema is JudgeOutputSchema:
-            obj = JudgeOutputSchema(
-                verdict_status="supported",
-                selected_solver_role="solver_a",
-                summary="Lời giải sau khi chỉnh sửa đã lấp đầy lỗ hổng xét trường hợp biên.",
-                final_proof_markdown="### Lời giải tổng hợp\n1. Xét trường hợp biên (Mệnh đề C1).\n2. Xét trường hợp tổng quát (Mệnh đề C2).",
-                challenge_adjudications=[
-                    ChallengeAdjudicationItemSchema(
-                        target_claim_id="C2",
-                        new_status="accepted",
-                        reason="Solver đã bổ sung mệnh đề C1 giải quyết triệt để trường hợp chia cho 0.",
-                    )
-                ],
-                accepted_claims=["C1", "C2"],
-                unresolved_issues=[],
-            )
+        elif response_schema is JudgeOutputSchema or schema_name in ("JudgeOutputSchema", "JudgeOutput"):
+            if schema_name == "JudgeOutput":
+                obj = response_schema(
+                    consensus_status="consensus_reached",
+                    winning_solver="solver_a",
+                    final_latex_solution="### Lời giải tổng hợp hoàn chỉnh\nChứng minh hoàn tất.",
+                    executive_summary="Hội đồng nhất trí với kết quả phân tích.",
+                    confidence_score=0.95,
+                )
+            else:
+                obj = JudgeOutputSchema(
+                    verdict_status="supported",
+                    selected_solver_role="solver_a",
+                    summary="Lời giải sau khi chỉnh sửa đã lấp đầy lỗ hổng xét trường hợp biên.",
+                    final_proof_markdown="### Lời giải tổng hợp\n1. Xét trường hợp biên (Mệnh đề C1).\n2. Xét trường hợp tổng quát (Mệnh đề C2).",
+                    challenge_adjudications=[
+                        ChallengeAdjudicationItemSchema(
+                            target_claim_id="C2",
+                            new_status="accepted",
+                            reason="Solver đã bổ sung mệnh đề C1 giải quyết triệt để trường hợp chia cho 0.",
+                        )
+                    ],
+                    accepted_claims=["C1", "C2"],
+                    unresolved_issues=[],
+                )
         elif response_schema is SourceDiscoveryOutputSchema:
             if "21n + 4" in user_prompt and "14n + 3" in user_prompt:
                 canonical = SolverOutputSchema(
@@ -758,165 +826,6 @@ class DeterministicMockAdapter(BaseLLMAdapter):
         return res, meta
 
 
-class MultiProviderRouter:
-    def __init__(self, force_mock: bool | None = None) -> None:
-        import os
-        deepseek_base = os.getenv(
-            "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        ).rstrip("/")
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
-
-        if force_mock is not None:
-            self.force_mock = force_mock
-        else:
-            self.force_mock = (settings.DEFAULT_LLM_PROVIDER == "mock")
-        deepseek_adapter = OpenAIAdapter(api_key=deepseek_key, base_url=deepseek_base)
-        deepseek_adapter.provider_name = "deepseek"
-
-        self.adapters: dict[str, BaseLLMAdapter] = {
-            "mock": DeterministicMockAdapter(),
-            "gemini": GeminiAdapter(),
-            "alibaba": AlibabaAdapter(),
-            "deepseek": deepseek_adapter,
-            "deepinfra": DeepInfraAdapter(),
-        }
-
-    def resolve_spec(self, role_model_spec: str) -> tuple[BaseLLMAdapter, str]:
-        if self.force_mock or role_model_spec.startswith("mock:"):
-            model_part = role_model_spec.split(":", 1)[1] if ":" in role_model_spec else role_model_spec
-            return self.adapters["mock"], model_part
-
-        if ":" in role_model_spec:
-            provider_key, model_name = role_model_spec.split(":", 1)
-        else:
-            provider_key, model_name = settings.DEFAULT_LLM_PROVIDER, role_model_spec
-
-        import os
-
-        # 1. Google Gemini
-        if provider_key == "gemini":
-            gemini_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
-            if not gemini_key and not self.force_mock:
-                raise ValueError(
-                    f"Chưa cấu hình GEMINI_API_KEY cho model '{model_name}'. "
-                    "Vui lòng thiết lập biến môi trường GEMINI_API_KEY trên Railway Variables."
-                )
-            return self.adapters["gemini"], model_name
-
-        # 2. Alibaba Cloud MaaS
-        if provider_key == "alibaba":
-            alibaba_base = os.getenv(
-                "ALIBABA_BASE_URL",
-                getattr(
-                    settings,
-                    "ALIBABA_BASE_URL",
-                    "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
-                ),
-            ).rstrip("/")
-            alibaba_key = os.getenv("ALIBABA_API_KEY", getattr(settings, "ALIBABA_API_KEY", ""))
-            if not alibaba_key and not self.force_mock:
-                raise ValueError(
-                    f"Chưa cấu hình ALIBABA_API_KEY cho model '{model_name}'. "
-                    "Vui lòng thiết lập biến môi trường ALIBABA_API_KEY trên Railway Variables."
-                )
-            adapter = AlibabaAdapter(api_key=alibaba_key, base_url=alibaba_base)
-            return adapter, model_name
-
-        # 3. DeepSeek Native
-        if provider_key == "deepseek":
-            deepseek_base = os.getenv(
-                "DEEPSEEK_BASE_URL", getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-            ).rstrip("/")
-            deepseek_key = os.getenv("DEEPSEEK_API_KEY", getattr(settings, "DEEPSEEK_API_KEY", ""))
-            if not deepseek_key and not self.force_mock:
-                raise ValueError(
-                    f"Chưa cấu hình DEEPSEEK_API_KEY cho model '{model_name}'. "
-                    "Vui lòng thiết lập biến môi trường DEEPSEEK_API_KEY trên Railway Variables."
-                )
-            adapter = OpenAIAdapter(api_key=deepseek_key, base_url=deepseek_base)
-            adapter.provider_name = "deepseek"
-            return adapter, model_name
-
-        # 4. DeepInfra
-        if provider_key == "deepinfra":
-            deepinfra_base = os.getenv(
-                "DEEPINFRA_BASE_URL",
-                getattr(settings, "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
-            ).rstrip("/")
-            deepinfra_key = os.getenv("DEEPINFRA_API_KEY", getattr(settings, "DEEPINFRA_API_KEY", ""))
-            if not deepinfra_key and not self.force_mock:
-                raise ValueError(
-                    f"Chưa cấu hình DEEPINFRA_API_KEY cho model '{model_name}'. "
-                    "Vui lòng thiết lập biến môi trường DEEPINFRA_API_KEY trên Railway Variables."
-                )
-            adapter = DeepInfraAdapter(api_key=deepinfra_key, base_url=deepinfra_base)
-            return adapter, model_name
-
-        adapter = self.adapters.get(provider_key)
-        if not adapter:
-            logger.error(
-                "MultiProviderRouter: Provider '%s' from spec '%s' is not supported. Supported: %s",
-                provider_key,
-                role_model_spec,
-                list(self.adapters.keys()),
-            )
-            raise ValueError(
-                f"Provider '{provider_key}' không được hỗ trợ. Hệ thống sử dụng 4 nhà cung cấp độc lập: gemini, alibaba, deepseek, deepinfra (và mock)."
-            )
-        return adapter, model_name
-
-    async def call_for_role(
-        self,
-        *,
-        role_model_spec: str,
-        prompt_version: str,
-        system_prompt: str,
-        user_prompt: str,
-        response_schema: type[T],
-        timeout_sec: float = 90.0,
-    ) -> tuple[T, LLMCallResult]:
-        adapter, model_name = self.resolve_spec(role_model_spec)
-        try:
-            return await adapter.generate_structured(
-                model_name=model_name,
-                prompt_version=prompt_version,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_schema=response_schema,
-                timeout_sec=timeout_sec,
-            )
-        except Exception as e:
-            logger.error(
-                "MultiProviderRouter: LLM call FAILED for role_model_spec='%s' (model='%s', provider='%s'): %s",
-                role_model_spec,
-                model_name,
-                getattr(adapter, "provider_name", "unknown"),
-                e,
-                exc_info=True,
-            )
-            raise
-
-    async def retrieve_source_with_grounding(
-        self,
-        *,
-        role_model_spec: str,
-        system_prompt: str,
-        user_prompt: str,
-        timeout_sec: float = 12.0,
-    ) -> tuple[dict[str, Any], LLMCallResult]:
-        adapter, model_name = self.resolve_spec(role_model_spec)
-        if hasattr(adapter, "generate_with_grounding"):
-            return await adapter.generate_with_grounding(
-                model_name=model_name,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                timeout_sec=timeout_sec,
-            )
-        raise NotImplementedError(
-            f"Provider '{getattr(adapter, 'provider_name', type(adapter).__name__)}' không hỗ trợ tra cứu Google Search Grounding."
-        )
-
-
 def get_available_models_catalog() -> list[dict[str, Any]]:
     import os
     gemini_avail = bool(settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY"))
@@ -1016,3 +925,8 @@ def get_available_models_catalog() -> list[dict[str, Any]]:
             "recommended_roles": ["normalizer", "source_finder", "solver_a", "solver_b", "skeptic", "judge"],
         },
     ]
+
+
+# Forwarding MultiProviderRouter & UniversalProviderRegistry from app.llm_gateway.router
+from app.llm_gateway.router import MultiProviderRouter, UniversalProviderRegistry  # noqa: E402
+

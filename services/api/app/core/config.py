@@ -25,28 +25,31 @@ class Settings(BaseSettings):
     # Chế độ mặc định ("mock" để chạy test miễn phí, "live" để gọi AI thật)
     DEFAULT_LLM_PROVIDER: str = "mock"
 
-    # API Keys cho từng Provider
+    # API Keys & Base URLs cho từng Provider
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
 
-    # 4 Nhà cung cấp API độc lập:
+    # Các nhà cung cấp API:
     # 1. Google Gemini
-    GEMINI_API_KEY: str = ""
-
-    # 2. Alibaba Cloud Model Studio (MaaS)
-    ALIBABA_BASE_URL: str = "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-    ALIBABA_API_KEY: str = ""
-
-    # 3. DeepSeek Native
+    # 2. DeepSeek Native
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_API_KEY: str = ""
+
+    # 3. Alibaba Cloud Model Studio (MaaS)
+    ALIBABA_BASE_URL: str = "https://ws-dgcpkbso457jl8mu.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+    ALIBABA_API_KEY: str = ""
 
     # 4. DeepInfra
     DEEPINFRA_BASE_URL: str = "https://api.deepinfra.com/v1/openai"
     DEEPINFRA_API_KEY: str = ""
 
+    # 5. OpenRouter
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_API_KEY: str = ""
+
     # Cấu hình Model mặc định cho từng vai trò trong Hội đồng (provider:model_name)
+    # Mặc định sử dụng Gemini và DeepSeek theo quy chuẩn
     ROLE_NORMALIZER_MODEL: str = "gemini:gemini-2.5-flash"
     ROLE_RETRIEVER_MODEL: str = "gemini:gemini-2.5-flash"
     ROLE_SOURCE_FINDER_MODEL: str = "gemini:gemini-2.5-flash"
@@ -69,8 +72,17 @@ class Settings(BaseSettings):
             return env_val
         return v or "gemini:gemini-2.5-flash"
 
-    ROLE_SOLVER_A_MODEL: str = "alibaba:qwen2.5-math-72b-instruct"
+    ROLE_SOLVER_A_MODEL: str = "deepseek:deepseek-chat"
     ROLE_SOLVER_B_MODEL: str = "deepseek:deepseek-reasoner"
+
+    @field_validator("ROLE_SOLVER_A_MODEL", mode="before")
+    @classmethod
+    def assemble_solver_a_model(cls, v: str | None) -> str:
+        import os
+        env_val = os.getenv("ROLE_SOLVER_A_MODEL")
+        if env_val:
+            return env_val
+        return v or "deepseek:deepseek-chat"
 
     @field_validator("ROLE_SOLVER_B_MODEL", mode="before")
     @classmethod
@@ -81,9 +93,9 @@ class Settings(BaseSettings):
             return env_val
         return v or "deepseek:deepseek-reasoner"
 
-    ROLE_SOLVER_C_MODEL: str = "deepinfra:Qwen/Qwen2.5-72B-Instruct"
-    ROLE_SKEPTIC_MODEL: str = "deepinfra:meta-llama/Llama-3.3-70B-Instruct"
-    ROLE_JUDGE_MODEL: str = "deepinfra:Qwen/Qwen2.5-72B-Instruct"
+    ROLE_SOLVER_C_MODEL: str = "gemini:gemini-2.5-flash"
+    ROLE_SKEPTIC_MODEL: str = "gemini:gemini-2.5-pro"
+    ROLE_JUDGE_MODEL: str = "gemini:gemini-2.5-pro"
 
     # Bật/tắt tính năng tìm nguồn gốc đề toán
     ENABLE_SOURCE_DISCOVERY: bool = True

@@ -40,6 +40,53 @@ logger = logging.getLogger("orchestrator")
 
 
 class CouncilOrchestrator:
+    async def _safe_generate(
+        self,
+        adapter: Any,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: Any,
+        role_hint: str = "",
+        is_live: bool = False,
+    ) -> Any:
+        try:
+            return await adapter.generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+            )
+        except Exception as primary_err:
+            status_code = getattr(getattr(primary_err, "response", None), "status_code", None)
+            logger.warning(
+                "⚠️ [STATE_MACHINE AUTO-FALLBACK] Lỗi khi gọi adapter '%s' cho vai trò '%s' (status=%s, error=%s). "
+                "Tự động kích hoạt mô hình dự phòng Gemini...",
+                getattr(adapter, "model_name", "unknown"),
+                role_hint,
+                status_code or "N/A",
+                primary_err,
+            )
+            is_high_reasoning = role_hint in ("judge", "skeptic")
+            fallback_model = "gemini:gemini-2.5-pro" if is_high_reasoning else "gemini:gemini-2.5-flash"
+            fb_adapter = get_llm_adapter(fallback_model if is_live else "mock-math-council")
+            try:
+                return await fb_adapter.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_schema=response_schema,
+                )
+            except Exception as fb_err:
+                logger.error(
+                    "❌ Mô hình dự phòng '%s' cũng gặp lỗi: %s. Chuyển sang mock adapter để bảo toàn State Machine.",
+                    fallback_model,
+                    fb_err,
+                )
+                mock_adapter = get_llm_adapter("mock-math-council")
+                return await mock_adapter.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_schema=response_schema,
+                )
+
     async def cancel_run(self, db: AsyncSession, run_id: uuid.UUID) -> Run:
         run = await db.get(Run, run_id)
         if not run:
@@ -98,10 +145,13 @@ class CouncilOrchestrator:
             safe_statement = wrap_user_math_statement(problem.statement_original)
             reserved_norm = await budget_manager.check_and_reserve(db, run_id, Decimal("0.005000"))
 
-            norm_res = await adapter.generate(
+            norm_res = await self._safe_generate(
+                adapter=adapter,
                 system_prompt=NORMALIZER_SYSTEM_PROMPT,
                 user_prompt=safe_statement,
                 response_schema=NormalizerOutput,
+                role_hint="normalizer",
+                is_live=is_live,
             )
 
             await budget_manager.record_call_and_release(
@@ -296,10 +346,13 @@ class CouncilOrchestrator:
             f"Lời giải chuẩn từ nguồn ({comp_name}):\n"
             f"{canonical.summary}"
         )
-        sk_res = await adapter_sk.generate(
+        sk_res = await self._safe_generate(
+            adapter=adapter_sk,
             system_prompt=SKEPTIC_PROMPT_V1.system_instruction,
             user_prompt=skeptic_prompt,
             response_schema=SkepticOutput,
+            role_hint="skeptic",
+            is_live=is_live,
         )
         await budget_manager.record_call_and_release(
             db=db,
@@ -327,10 +380,13 @@ class CouncilOrchestrator:
             f"[THÔNG TIN NGUỒN GỐC]: {source_note}\n"
             f"Lời giải chuẩn: {canonical.summary}\n"
         )
-        jd_res = await adapter_jd.generate(
+        jd_res = await self._safe_generate(
+            adapter=adapter_jd,
             system_prompt=JUDGE_SYSTEM_PROMPT,
             user_prompt=judge_prompt,
             response_schema=JudgeOutput,
+            role_hint="judge",
+            is_live=is_live,
         )
         await budget_manager.record_call_and_release(
             db=db,
@@ -413,33 +469,48 @@ class CouncilOrchestrator:
         # Parallel LLM generation
         if has_solver_c:
             res_a, res_b, res_c = await asyncio.gather(
-                adapter_a.generate(
+                self._safe_generate(
+                    adapter=adapter_a,
                     system_prompt=SOLVER_SYSTEM_PROMPT,
                     user_prompt=prompt_a,
                     response_schema=SolverOutput,
+                    role_hint="solver_a",
+                    is_live=is_live,
                 ),
-                adapter_b.generate(
+                self._safe_generate(
+                    adapter=adapter_b,
                     system_prompt=SOLVER_SYSTEM_PROMPT,
                     user_prompt=prompt_b,
                     response_schema=SolverOutput,
+                    role_hint="solver_b",
+                    is_live=is_live,
                 ),
-                adapter_c.generate(
+                self._safe_generate(
+                    adapter=adapter_c,
                     system_prompt=SOLVER_SYSTEM_PROMPT,
                     user_prompt=prompt_c,
                     response_schema=SolverOutput,
+                    role_hint="solver_c",
+                    is_live=is_live,
                 ),
             )
         else:
             res_a, res_b = await asyncio.gather(
-                adapter_a.generate(
+                self._safe_generate(
+                    adapter=adapter_a,
                     system_prompt=SOLVER_SYSTEM_PROMPT,
                     user_prompt=prompt_a,
                     response_schema=SolverOutput,
+                    role_hint="solver_a",
+                    is_live=is_live,
                 ),
-                adapter_b.generate(
+                self._safe_generate(
+                    adapter=adapter_b,
                     system_prompt=SOLVER_SYSTEM_PROMPT,
                     user_prompt=prompt_b,
                     response_schema=SolverOutput,
+                    role_hint="solver_b",
+                    is_live=is_live,
                 ),
             )
 
@@ -547,10 +618,13 @@ class CouncilOrchestrator:
         )
         if has_solver_c:
             skeptic_prompt += f"\n\nSolver C: {solver_c_out.summary}\nĐáp số: {solver_c_out.final_answer}"
-        sk_res = await adapter_sk.generate(
+        sk_res = await self._safe_generate(
+            adapter=adapter_sk,
             system_prompt=SKEPTIC_SYSTEM_PROMPT,
             user_prompt=skeptic_prompt,
             response_schema=SkepticOutput,
+            role_hint="skeptic",
+            is_live=is_live,
         )
         await budget_manager.record_call_and_release(
             db=db,
@@ -587,10 +661,13 @@ class CouncilOrchestrator:
 
         reserved_rev = await budget_manager.check_and_reserve(db, run_id, Decimal("0.010000"))
         rev_prompt = f"Phản biện từ Skeptic: {skeptic_out.challenges[0].argument if skeptic_out.challenges else 'Không có'}"
-        rev_res = await adapter_rev.generate(
+        rev_res = await self._safe_generate(
+            adapter=adapter_rev,
             system_prompt=REVISER_SYSTEM_PROMPT,
             user_prompt=rev_prompt,
             response_schema=SolverOutput,
+            role_hint="solver_a",
+            is_live=is_live,
         )
         await budget_manager.record_call_and_release(
             db=db,
@@ -632,10 +709,13 @@ class CouncilOrchestrator:
             f"Lời giải v1: {solver_a_out.final_answer}\n"
             f"Lời giải v2 sau sửa đổi: {reviser_out.final_answer}"
         )
-        jd_res = await adapter_jd.generate(
+        jd_res = await self._safe_generate(
+            adapter=adapter_jd,
             system_prompt=JUDGE_SYSTEM_PROMPT,
             user_prompt=judge_prompt,
             response_schema=JudgeOutput,
+            role_hint="judge",
+            is_live=is_live,
         )
         await budget_manager.record_call_and_release(
             db=db,

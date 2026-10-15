@@ -83,6 +83,7 @@ class MathCouncilOrchestrator:
             system_prompt=NORMALIZER_PROMPT_V1.system_instruction,
             user_prompt=wrap_untrusted_content("problem_statement", statement_original),
             response_schema=NormalizationOutputSchema,
+            role_hint="normalizer",
         )
         self._record_call(norm_meta)
 
@@ -199,6 +200,7 @@ class MathCouncilOrchestrator:
                     + wrap_untrusted_content("canonical_solution", canonical.model_dump_json())
                 ),
                 response_schema=SkepticOutputSchema,
+                role_hint="skeptic",
             )
             self._record_call(meta_crit)
 
@@ -228,6 +230,7 @@ class MathCouncilOrchestrator:
                 system_prompt=JUDGE_PROMPT_V1.system_instruction + f"\nThông tin nguồn gốc: {source_desc}",
                 user_prompt=judge_input,
                 response_schema=JudgeOutputSchema,
+                role_hint="judge",
             )
             self._record_call(meta_j)
 
@@ -280,6 +283,7 @@ class MathCouncilOrchestrator:
                     system_prompt=SOLVER_PROMPT_V1.system_instruction + f"\nVai trò: {role.replace('_', ' ').title()}.",
                     user_prompt=solver_prompt_input,
                     response_schema=SolverOutputSchema,
+                    role_hint=role,
                 )
                 for role in solver_roles
             ]
@@ -310,6 +314,7 @@ class MathCouncilOrchestrator:
                             + wrap_untrusted_content(f"{role}_solution", current_solvers[role].model_dump_json())
                         ),
                         response_schema=SkepticOutputSchema,
+                        role_hint="skeptic",
                     )
                     for role in solver_roles
                 ]
@@ -341,6 +346,7 @@ class MathCouncilOrchestrator:
                             + wrap_untrusted_content("skeptic_challenges", crit_map[role].model_dump_json())
                         ),
                         response_schema=SolverRevisionOutputSchema,
+                        role_hint=f"{role}_revision",
                     )
                     self._record_call(meta_r)
                     current_solvers[role] = rev_res.revised_solution
@@ -365,6 +371,7 @@ class MathCouncilOrchestrator:
             system_prompt=JUDGE_PROMPT_V1.system_instruction,
             user_prompt=judge_input,
             response_schema=JudgeOutputSchema,
+            role_hint="judge",
         )
         self._record_call(meta_j)
 
