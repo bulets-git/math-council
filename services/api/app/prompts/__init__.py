@@ -48,7 +48,27 @@ Nhiệm vụ:
 4. Khai báo rõ quan hệ phụ thuộc giữa các mệnh đề (depends_on).
 5. Đưa ra đáp số cuối cùng chính xác.
 Mỗi bước biến đổi phải có căn cứ rõ ràng, không ngụy biện, không nhảy bước lập luận.
-Trả về kết quả ở định dạng JSON phù hợp với schema SolverOutput.
+
+BẮT BUỘC: Chỉ trả về một đối tượng JSON hợp lệ duy nhất tuân thủ đầy đủ 4 trường sau:
+{
+  "summary": "Tóm tắt ngắn gọn ý tưởng và phương pháp giải toán (1-3 câu)",
+  "claims": [
+    {
+      "label": "C1",
+      "content": "Nội dung khẳng định hoặc bước biến đổi toán học đầu tiên",
+      "claim_type": "inference",
+      "depends_on": []
+    },
+    {
+      "label": "C2",
+      "content": "Nội dung bước suy luận tiếp theo",
+      "claim_type": "inference",
+      "depends_on": ["C1"]
+    }
+  ],
+  "final_answer": "Đáp số cuối cùng hoặc kết luận chứng minh (ví dụ: x = 5 hoặc ĐPCM)",
+  "solution": "Toàn văn bài giải chi tiết, lập luận đầy đủ kèm các công thức toán LaTeX"
+}
 """
 
 SKEPTIC_SYSTEM_PROMPT = """Bạn là Nhà Phản Biện Độc Lập (Skeptic) của Hội Đồng Toán Học AI Math Council.
@@ -65,7 +85,7 @@ Nhiệm vụ:
 1. Xem xét các phản biện từ Skeptic.
 2. Tạo ra một phiên bản lời giải mới (version + 1) sửa chữa toàn bộ các điểm thiếu sót hoặc bác bỏ phản biện bằng lập luận xác đáng.
 3. KHÔNG được tự ý đóng phản biện; chỉ tạo phiên bản lời giải mới kèm các mệnh đề đã hiệu chỉnh.
-Trả về kết quả ở định dạng JSON phù hợp với schema SolverOutput.
+BẮT BUỘC: Trả về một đối tượng JSON hợp lệ duy nhất có đầy đủ các trường: summary, claims, final_answer, solution.
 """
 
 JUDGE_SYSTEM_PROMPT = """Bạn là Thẩm Định Viên Trưởng (Chief Judge) của Hội Đồng Toán Học AI Math Council.

@@ -62,17 +62,50 @@ class SourceMetadataSchema(BaseModel):
 
 
 class ClaimItemSchema(BaseModel):
-    claim_id: str = Field(..., pattern=r"^C[1-9][0-9]*$")
-    statement: str
-    reasoning: str
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    claim_id: str = Field(default="C1", validation_alias=AliasChoices("claim_id", "label", "id"), pattern=r"^C[1-9][0-9]*$")
+    statement: str = Field(default="Bước suy luận toán học", validation_alias=AliasChoices("statement", "content", "claim", "text"))
+    reasoning: str = Field(default="Biến đổi trực tiếp từ giả thiết.", validation_alias=AliasChoices("reasoning", "explanation", "details"))
     depends_on: list[str] = Field(default_factory=list)
     status: ClaimStatus = Field(default="unverified")
 
+    @model_validator(mode="before")
+    @classmethod
+    def unify_claim_item_schema(cls, data: Any) -> Any:
+        import re
+        if isinstance(data, str):
+            return {
+                "claim_id": "C1",
+                "statement": data,
+                "reasoning": "Biến đổi đại số hoặc suy luận trực tiếp.",
+                "depends_on": [],
+                "status": "unverified",
+            }
+        if isinstance(data, dict):
+            cid = data.get("claim_id") or data.get("label") or data.get("id") or "C1"
+            cid_str = str(cid)
+            if not cid_str.startswith("C") or not cid_str[1:].isdigit():
+                nums = re.findall(r"\d+", cid_str)
+                cid_str = f"C{nums[0]}" if nums else "C1"
+            data["claim_id"] = cid_str
+            if "statement" not in data:
+                data["statement"] = data.get("content") or data.get("claim") or data.get("text") or "Bước suy luận toán học"
+            if "reasoning" not in data:
+                data["reasoning"] = data.get("explanation") or data.get("details") or "Biến đổi trực tiếp từ giả thiết."
+            if "depends_on" not in data or not isinstance(data.get("depends_on"), list):
+                data["depends_on"] = []
+            if "status" not in data:
+                data["status"] = "unverified"
+        return data
+
 
 class ProofStepSchema(BaseModel):
-    step_id: str = Field(..., pattern=r"^S[1-9][0-9]*$")
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    step_id: str = Field(default="S1", validation_alias=AliasChoices("step_id", "id"), pattern=r"^S[1-9][0-9]*$")
     claim_refs: list[str] = Field(default_factory=list)
-    content: str
+    content: str = Field(default="Hoàn tất bước lập luận.")
 
 
 class SolverOutputSchema(BaseModel):
@@ -80,12 +113,137 @@ class SolverOutputSchema(BaseModel):
 
     task_type: Literal["solve", "revise"] = "solve"
     status: Literal["completed", "partial", "failed"] = "completed"
-    summary: str
-    claims: list[ClaimItemSchema] = Field(..., min_length=1)
+    summary: str = Field(default="Tóm tắt lời giải toán học", validation_alias=AliasChoices("summary", "approach", "overview"))
+    claims: list[ClaimItemSchema] = Field(default_factory=list)
     proof_steps: list[ProofStepSchema] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
     confidence: ConfidenceLevel = "medium"
+    final_answer: str | None = Field(default="Xem chi tiết lời giải", validation_alias=AliasChoices("final_answer", "answer", "result", "conclusion"))
+    solution: str | None = Field(default=None, validation_alias=AliasChoices("solution", "full_solution", "latex_solution", "proof"))
     reasoning_content: str | None = Field(default=None, description="Chuỗi suy luận reasoning tokens / thinking content")
+
+    @model_validator(mode="before")
+    @classmethod
+    def unify_solver_schema(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            sol = data.strip()
+            return {
+                "task_type": "solve",
+                "status": "completed",
+                "summary": sol[:300].strip() or "Lời giải toán học",
+                "claims": [{"claim_id": "C1", "statement": sol, "reasoning": "Suy luận toán học", "depends_on": []}],
+                "proof_steps": [{"step_id": "S1", "claim_refs": ["C1"], "content": sol}],
+                "final_answer": "Xem chi tiết lời giải",
+                "solution": sol,
+            }
+        if isinstance(data, dict):
+            raw_solution = (
+                data.get("solution")
+                or data.get("full_solution")
+                or data.get("latex_solution")
+                or data.get("final_solution")
+                or data.get("proof")
+            )
+            if raw_solution and not data.get("solution"):
+                data["solution"] = str(raw_solution)
+
+            if not data.get("summary"):
+                if raw_solution and isinstance(raw_solution, str):
+                    lines = [ln.strip() for ln in raw_solution.split("\n") if ln.strip()]
+                    data["summary"] = (" ".join(lines[:3]) if lines else raw_solution)[:300].strip()
+                elif data.get("claims") and isinstance(data["claims"], list) and len(data["claims"]) > 0:
+                    c0 = data["claims"][0]
+                    c_text = c0.get("statement") or c0.get("content") if isinstance(c0, dict) else str(c0)
+                    data["summary"] = str(c_text)[:300]
+                else:
+                    data["summary"] = "Phân tích và giải quyết bài toán qua các bước logic."
+
+            if not data.get("final_answer"):
+                cand_ans = (
+                    data.get("answer")
+                    or data.get("result")
+                    or data.get("conclusion")
+                    or data.get("final_result")
+                )
+                if cand_ans:
+                    data["final_answer"] = str(cand_ans).strip()
+                elif raw_solution and isinstance(raw_solution, str):
+                    lines = [ln.strip() for ln in raw_solution.split("\n") if ln.strip()]
+                    data["final_answer"] = (lines[-1] if lines else raw_solution)[:300].strip()
+                elif data.get("claims") and isinstance(data["claims"], list) and len(data["claims"]) > 0:
+                    c_last = data["claims"][-1]
+                    c_text = c_last.get("statement") or c_last.get("content") if isinstance(c_last, dict) else str(c_last)
+                    data["final_answer"] = str(c_text)[:300]
+                else:
+                    data["final_answer"] = "Xem kết luận trong lời giải chi tiết."
+
+            raw_claims = data.get("claims")
+            if not raw_claims or not isinstance(raw_claims, list) or len(raw_claims) == 0:
+                claim_text = (
+                    (raw_solution if isinstance(raw_solution, str) else "")
+                    or str(data.get("summary") or "Thực hiện biến đổi và suy luận toán học.")
+                )
+                data["claims"] = [
+                    {
+                        "claim_id": "C1",
+                        "statement": claim_text,
+                        "reasoning": "Biến đổi đại số hoặc suy luận trực tiếp.",
+                        "depends_on": [],
+                        "status": "unverified",
+                    }
+                ]
+            else:
+                formatted = []
+                for i, c in enumerate(raw_claims, 1):
+                    if isinstance(c, str):
+                        formatted.append({
+                            "claim_id": f"C{i}",
+                            "statement": c,
+                            "reasoning": "Bước suy luận.",
+                            "depends_on": [f"C{i-1}"] if i > 1 else [],
+                            "status": "unverified",
+                        })
+                    elif isinstance(c, dict):
+                        cd = dict(c)
+                        if not cd.get("claim_id"):
+                            cd["claim_id"] = cd.get("label") or cd.get("id") or f"C{i}"
+                        if not cd.get("statement"):
+                            cd["statement"] = cd.get("content") or cd.get("claim") or cd.get("text") or f"Mệnh đề {i}"
+                        if not cd.get("reasoning"):
+                            cd["reasoning"] = cd.get("explanation") or "Suy luận trực tiếp."
+                        if "depends_on" not in cd or not isinstance(cd["depends_on"], list):
+                            cd["depends_on"] = []
+                        formatted.append(cd)
+                    else:
+                        formatted.append({
+                            "claim_id": f"C{i}",
+                            "statement": str(c),
+                            "reasoning": "Bước suy luận.",
+                            "depends_on": [],
+                            "status": "unverified",
+                        })
+                data["claims"] = formatted
+
+            if not data.get("proof_steps") or not isinstance(data.get("proof_steps"), list) or len(data.get("proof_steps")) == 0:
+                data["proof_steps"] = [
+                    {
+                        "step_id": "S1",
+                        "claim_refs": [c["claim_id"] for c in data["claims"]],
+                        "content": data.get("summary") or (raw_solution if isinstance(raw_solution, str) else "Hoàn tất chứng minh."),
+                    }
+                ]
+
+            if not data.get("solution"):
+                if raw_solution:
+                    data["solution"] = raw_solution
+                else:
+                    claims_lines = "\n".join([f"- [{c['claim_id']}]: {c['statement']}" for c in data["claims"]])
+                    data["solution"] = (
+                        f"### Tóm tắt ý tưởng\n{data.get('summary', '')}\n\n"
+                        f"### Các bước suy luận (Claims)\n{claims_lines}\n\n"
+                        f"### Đáp số / Kết luận\n{data.get('final_answer', '')}"
+                    )
+        return data
 
 
 class SourceDiscoveryOutputSchema(BaseModel):
@@ -204,19 +362,173 @@ class NormalizerOutput(BaseModel):
 
 
 class ClaimItem(BaseModel):
-    label: str = Field(..., description="Định danh mệnh đề: C1, C2,...")
-    content: str = Field(..., description="Nội dung khẳng định hoặc bước biến đổi toán học")
-    claim_type: Literal["fact", "inference", "calculation", "conjecture", "definition"] = "inference"
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    label: str = Field(default="C1", validation_alias=AliasChoices("label", "claim_id", "id", "name"), description="Định danh mệnh đề: C1, C2,...")
+    content: str = Field(default="Nội dung bước suy luận", validation_alias=AliasChoices("content", "statement", "reasoning", "claim", "text", "description"), description="Nội dung khẳng định hoặc bước biến đổi toán học")
+    claim_type: Literal["fact", "inference", "calculation", "conjecture", "definition"] = Field(default="inference", validation_alias=AliasChoices("claim_type", "type"))
     depends_on: list[str] = Field(default_factory=list, description="Danh sách nhãn mệnh đề tiên quyết")
+
+    @model_validator(mode="before")
+    @classmethod
+    def unify_claim_item(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            return {
+                "label": "C1",
+                "content": data,
+                "claim_type": "inference",
+                "depends_on": [],
+            }
+        if isinstance(data, dict):
+            if "label" not in data:
+                data["label"] = data.get("claim_id") or data.get("id") or "C1"
+            if "content" not in data:
+                data["content"] = data.get("statement") or data.get("reasoning") or data.get("text") or "Bước suy luận toán học"
+            if "claim_type" not in data:
+                data["claim_type"] = "inference"
+            if "depends_on" not in data or not isinstance(data.get("depends_on"), list):
+                data["depends_on"] = []
+            else:
+                data["depends_on"] = [str(x) for x in data["depends_on"]]
+        return data
 
 
 class SolverOutput(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    summary: str = Field(..., description="Tóm tắt ý tưởng giải")
-    claims: list[ClaimItem] = Field(..., min_length=1, description="Các bước suy luận dạng mệnh đề có cấu trúc")
-    final_answer: str = Field(..., description="Đáp số hoặc kết luận cuối cùng")
-    reasoning_content: str | None = Field(default=None, description="Chuỗi suy luận reasoning tokens / thinking content")
+    summary: str = Field(
+        default="Tóm tắt ý tưởng và phương pháp giải toán",
+        validation_alias=AliasChoices("summary", "approach", "overview", "solution_summary"),
+        description="Tóm tắt ý tưởng giải",
+    )
+    claims: list[ClaimItem] = Field(
+        default_factory=list,
+        description="Các bước suy luận dạng mệnh đề có cấu trúc",
+    )
+    final_answer: str = Field(
+        default="Xem chi tiết lời giải",
+        validation_alias=AliasChoices("final_answer", "answer", "result", "conclusion", "final_result"),
+        description="Đáp số hoặc kết luận cuối cùng",
+    )
+    solution: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("solution", "full_solution", "latex_solution", "proof", "final_solution"),
+        description="Toàn bộ lời giải chi tiết bằng LaTeX",
+    )
+    reasoning_content: str | None = Field(
+        default=None,
+        description="Chuỗi suy luận reasoning tokens / thinking content",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def unify_solver_output(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            sol = data.strip()
+            return {
+                "summary": sol[:300].strip() or "Lời giải toán học",
+                "claims": [{"label": "C1", "content": sol, "claim_type": "inference", "depends_on": []}],
+                "final_answer": "Xem chi tiết lời giải",
+                "solution": sol,
+            }
+
+        if isinstance(data, dict):
+            raw_solution = (
+                data.get("solution")
+                or data.get("full_solution")
+                or data.get("latex_solution")
+                or data.get("final_solution")
+                or data.get("proof")
+            )
+            if raw_solution and not data.get("solution"):
+                data["solution"] = str(raw_solution)
+
+            if not data.get("summary"):
+                if raw_solution and isinstance(raw_solution, str):
+                    lines = [ln.strip() for ln in raw_solution.split("\n") if ln.strip()]
+                    data["summary"] = (" ".join(lines[:3]) if lines else raw_solution)[:300].strip()
+                elif data.get("claims") and isinstance(data["claims"], list) and len(data["claims"]) > 0:
+                    c0 = data["claims"][0]
+                    c_text = c0.get("content") or c0.get("statement") if isinstance(c0, dict) else str(c0)
+                    data["summary"] = str(c_text)[:300]
+                else:
+                    data["summary"] = "Phân tích và giải quyết bài toán qua các bước logic."
+
+            if not data.get("final_answer"):
+                cand_ans = (
+                    data.get("answer")
+                    or data.get("result")
+                    or data.get("conclusion")
+                    or data.get("final_result")
+                )
+                if cand_ans:
+                    data["final_answer"] = str(cand_ans).strip()
+                elif raw_solution and isinstance(raw_solution, str):
+                    lines = [ln.strip() for ln in raw_solution.split("\n") if ln.strip()]
+                    data["final_answer"] = (lines[-1] if lines else raw_solution)[:300].strip()
+                elif data.get("claims") and isinstance(data["claims"], list) and len(data["claims"]) > 0:
+                    c_last = data["claims"][-1]
+                    c_text = c_last.get("content") or c_last.get("statement") if isinstance(c_last, dict) else str(c_last)
+                    data["final_answer"] = str(c_text)[:300]
+                else:
+                    data["final_answer"] = "Xem kết luận trong lời giải chi tiết."
+
+            raw_claims = data.get("claims")
+            if not raw_claims or not isinstance(raw_claims, list) or len(raw_claims) == 0:
+                claim_text = (
+                    (raw_solution if isinstance(raw_solution, str) else "")
+                    or str(data.get("summary") or "Thực hiện biến đổi và suy luận toán học.")
+                )
+                data["claims"] = [
+                    {
+                        "label": "C1",
+                        "content": claim_text,
+                        "claim_type": "inference",
+                        "depends_on": [],
+                    }
+                ]
+            else:
+                formatted_claims = []
+                for i, c in enumerate(raw_claims, 1):
+                    if isinstance(c, str):
+                        formatted_claims.append({
+                            "label": f"C{i}",
+                            "content": c,
+                            "claim_type": "inference",
+                            "depends_on": [f"C{i-1}"] if i > 1 else [],
+                        })
+                    elif isinstance(c, dict):
+                        c_dict = dict(c)
+                        if not c_dict.get("label"):
+                            c_dict["label"] = c_dict.get("claim_id") or c_dict.get("id") or f"C{i}"
+                        if not c_dict.get("content"):
+                            c_dict["content"] = c_dict.get("statement") or c_dict.get("reasoning") or c_dict.get("text") or f"Bước suy luận {i}"
+                        if not c_dict.get("claim_type"):
+                            c_dict["claim_type"] = "inference"
+                        if "depends_on" not in c_dict or not isinstance(c_dict["depends_on"], list):
+                            c_dict["depends_on"] = []
+                        formatted_claims.append(c_dict)
+                    else:
+                        formatted_claims.append({
+                            "label": f"C{i}",
+                            "content": str(c),
+                            "claim_type": "inference",
+                            "depends_on": [],
+                        })
+                data["claims"] = formatted_claims
+
+            if not data.get("solution"):
+                if raw_solution:
+                    data["solution"] = raw_solution
+                else:
+                    claims_lines = "\n".join([f"- [{c['label']}]: {c['content']}" for c in data["claims"]])
+                    data["solution"] = (
+                        f"### Tóm tắt ý tưởng\n{data.get('summary', '')}\n\n"
+                        f"### Các bước suy luận (Claims)\n{claims_lines}\n\n"
+                        f"### Đáp số / Kết luận\n{data.get('final_answer', '')}"
+                    )
+
+        return data
 
 
 class ChallengeItem(BaseModel):

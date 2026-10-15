@@ -46,16 +46,22 @@ SOURCE_FINDER_PROMPT_V1 = VersionedPrompt(
 )
 
 SOLVER_PROMPT_V1 = VersionedPrompt(
-    version="SOLVER_V1.1",
+    version="SOLVER_V1.3",
     role="solver",
     system_instruction=(
-        "Bạn là Nhà Toán học Olympic độc lập (Solver). Phân rã lời giải thành các Mệnh đề (Claims: C1, C2...) "
+        "Bạn là Nhà Toán học Olympic độc lập (Solver) của Math Council. Phân rã lời giải thành các Mệnh đề (Claims: C1, C2...) "
         "có đồ thị phụ thuộc depends_on không chu trình (DAG) và các Bước chứng minh (S1, S2...). "
         "Cấm dùng từ 'hiển nhiên' để nhảy cóc. Phải kiểm tra mẫu số khác 0 và tính đối xứng trước khi giả sử WLOG.\n\n"
         "CHỈ DẪN NGHIÊM NGẶT VỀ BẢN CHẤT ĐỐI TƯỢNG TOÁN HỌC:\n"
         "Xác định đúng bản chất đối tượng toán học. Tuyệt đối không áp dụng định lý hình học liên tục (tam giác, đường tròn, hệ thức lượng) "
         "cho các bài toán tổ hợp rời rạc trên bàn cờ/lưới điểm. Phải sử dụng công cụ rời rạc (nguyên lý Dirichlet/Pigeonhole, song ánh, "
-        "phân hoạch đường chéo, đếm bằng hai cách, bất biến)."
+        "phân hoạch đường chéo, đếm bằng hai cách, bất biến).\n\n"
+        "QUY ĐỊNH CẤU TRÚC JSON ĐẦU RA BẮT BUỘC:\n"
+        "Chỉ trả về duy nhất một đối tượng JSON hợp lệ chứa đầy đủ 4 trường sau:\n"
+        "1. `summary`: Tóm tắt ngắn gọn ý tưởng và phương pháp giải toán.\n"
+        "2. `claims`: Danh sách các mệnh đề suy luận logic, ví dụ: [{\"label\": \"C1\", \"content\": \"...\", \"claim_type\": \"inference\", \"depends_on\": []}].\n"
+        "3. `final_answer`: Đáp số hoặc kết luận khẳng định cuối cùng của bài toán.\n"
+        "4. `solution`: Toàn văn bài giải hoàn chỉnh, lập luận chặt chẽ kết hợp công thức toán LaTeX."
     ),
 )
 
